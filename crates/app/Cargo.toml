@@ -9,6 +9,19 @@ name = "lf-mide"
 path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+color-eyre.workspace = true
+crossterm.workspace = true
+directories.workspace = true
+futures.workspace = true
+lf-mide-core.workspace = true
+lf-mide-ui.workspace = true
+lf-mide-vcs.workspace = true
+ratatui.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

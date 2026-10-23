@@ -1,0 +1,16 @@
+[package]
+name = "lf-mide-core"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide app state, actions, reducer, config and project detection"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

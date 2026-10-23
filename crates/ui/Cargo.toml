@@ -1,0 +1,12 @@
+[package]
+name = "lf-mide-ui"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide ratatui widgets and layout"
+
+[dependencies]
+lf-mide-core.workspace = true
+ratatui.workspace = true
+
+[lints]
+workspace = true

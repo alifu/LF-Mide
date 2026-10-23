@@ -1,0 +1,16 @@
+[package]
+name = "lf-mide-vcs"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide git integration"
+
+[dependencies]
+git2.workspace = true
+lf-mide-core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

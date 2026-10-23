@@ -65,8 +65,24 @@ Both CMP templates are supported:
 
 ```bash
 cargo build --release
-cargo run -p lf-mide
+./target/release/lf-mide /path/to/your/cmp-project   # or run it inside the project
 ```
+
+Keys so far: `Tab` / `Shift-Tab` move focus, `q` or `Ctrl-C` quits.
+
+## Configuration
+
+Global: `~/.config/lf-mide/config.toml` (or `$XDG_CONFIG_HOME/lf-mide/config.toml`).
+Per project: `.lfmide.toml` in the project root, which overrides the global file.
+
+```toml
+leader = "C-Space"     # prefix for IDE commands
+terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux
+show_blame = false
+show_perf = true
+```
+
+Logs: `~/Library/Caches/lf-mide/lf-mide.<date>.log` (7 days kept). Set `LF_MIDE_LOG=debug` for more detail.
 
 ## Development
 
@@ -80,14 +96,17 @@ Workspace layout:
 
 ```
 crates/
-└── app/              # lf-mide binary
+├── app/              # lf-mide binary: CLI, event loop, keymap, background tasks
+├── core/             # state, actions, pure reducer, config, project detection
+├── ui/               # ratatui rendering (pure view of the state)
+└── vcs/              # git: branch, dirty state
 spikes/
 └── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
 docs/
 └── spike-results.md  # Phase 0 results and measurements
 ```
 
-More crates (`core`, `platform`, `vcs`, `editor`, `ui`) are added as the roadmap progresses.
+More crates (`platform`, `editor`) are added as the roadmap progresses.
 
 ## Phase 0 results
 
