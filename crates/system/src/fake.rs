@@ -12,6 +12,9 @@ pub struct FakeSystem {
     files: BTreeMap<PathBuf, String>,
     dirs: BTreeMap<PathBuf, Vec<String>>,
     home: Option<PathBuf>,
+    /// Commands passed to `spawn`, as `"program arg arg"`.
+    spawned: std::sync::Mutex<Vec<String>>,
+    spawn_errors: HashMap<String, RunError>,
     /// (link, target): any path under `link` canonicalizes under `target`.
     symlinks: Vec<(PathBuf, PathBuf)>,
 }
@@ -80,6 +83,17 @@ impl FakeSystem {
         self
     }
 
+    /// Makes `spawn` of `cmd` fail with `error`.
+    pub fn spawn_fails(mut self, cmd: &str, error: RunError) -> Self {
+        self.spawn_errors.insert(cmd.into(), error);
+        self
+    }
+
+    /// What was passed to `spawn` so far, in order.
+    pub fn spawned(&self) -> Vec<String> {
+        self.spawned.lock().unwrap().clone()
+    }
+
     pub fn run_error(mut self, cmd: &str, error: RunError) -> Self {
         self.commands.insert(cmd.into(), Err(error));
         self
@@ -124,6 +138,15 @@ impl System for FakeSystem {
             .get(&key(program, args))
             .cloned()
             .unwrap_or(Err(RunError::NotFound))
+    }
+
+    fn spawn(&self, program: &str, args: &[&str]) -> Result<(), RunError> {
+        let command = key(program, args);
+        self.spawned.lock().unwrap().push(command.clone());
+        match self.spawn_errors.get(&command) {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
     }
 
     fn env(&self, key: &str) -> Option<String> {
@@ -196,6 +219,21 @@ mod tests {
 
         assert_eq!(only_relative.which("java"), None);
         assert_eq!(both.which("java"), Some(PathBuf::from("/opt/bin/java")));
+    }
+
+    #[test]
+    fn spawn_records_the_command_and_can_be_made_to_fail() {
+        let sys = FakeSystem::new().spawn_fails("emulator -avd Bad", RunError::NotFound);
+
+        assert_eq!(sys.spawn("emulator", &["-avd", "Pixel"]), Ok(()));
+        assert_eq!(
+            sys.spawn("emulator", &["-avd", "Bad"]),
+            Err(RunError::NotFound)
+        );
+        assert_eq!(
+            sys.spawned(),
+            vec!["emulator -avd Pixel", "emulator -avd Bad"]
+        );
     }
 
     #[test]

@@ -1,10 +1,9 @@
 //! Dependency checks behind `lf-mide doctor`.
 
 pub mod checks;
-pub mod props;
 pub mod report;
-pub mod version;
 
+pub use lf_mide_core::{props, version};
 pub use lf_mide_system as system;
 #[cfg(test)]
 pub(crate) use lf_mide_system::fake;

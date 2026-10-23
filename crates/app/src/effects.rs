@@ -7,10 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lf_mide_core::nav::clean_relative;
-use lf_mide_core::{Action, AppState, GrepHit};
+use lf_mide_core::{Action, AppState, DeviceAction, DeviceCommand, GrepHit, ProjectPrefs};
 use lf_mide_editor::EditorError;
 use lf_mide_nav::grep::GrepError;
 use lf_mide_nav::scan::Scan;
+use lf_mide_platform::{Listing, PlatformError};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Finder results kept (the list scrolls, but nobody reads 5000 matches).
@@ -61,6 +62,53 @@ pub fn open_result_action(path: &Path, result: Result<String, EditorError>) -> A
         Err(EditorError::NotRunning(_)) => Action::EditorLost,
         Err(other) => Action::Status(other.to_string()),
     }
+}
+
+/// How often devices are listed again.
+pub const DEVICE_POLL: Duration = Duration::from_secs(4);
+/// Booting a simulator or stopping an emulator can take a while.
+const DEVICE_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A device listing as the action that puts it in the state.
+pub fn listing_action(listing: Listing) -> Action {
+    Action::DevicesLoaded {
+        devices: Arc::new(listing.devices),
+        errors: listing.errors,
+    }
+}
+
+/// What follows a finished start/stop: a refresh if it worked, otherwise the
+/// failure (which also ends the "starting..." display).
+pub fn command_result_actions(
+    command: &DeviceCommand,
+    result: Result<(), PlatformError>,
+) -> Vec<Action> {
+    match result {
+        Ok(()) => vec![Action::RefreshDevices],
+        Err(error) => vec![Action::DeviceActionFailed {
+            platform: command.device.platform,
+            id: command.device.id.clone(),
+            message: error.to_string(),
+        }],
+    }
+}
+
+/// The state without its queued device commands, and those commands.
+pub fn take_commands(state: AppState) -> (AppState, Vec<DeviceCommand>) {
+    let commands = state.pending_commands.clone();
+    (
+        AppState {
+            pending_commands: Vec::new(),
+            ..state
+        },
+        commands,
+    )
+}
+
+/// The preferences to save, if they differ from `before`.
+pub fn prefs_to_save(before: &ProjectPrefs, state: &AppState) -> Option<ProjectPrefs> {
+    let now = state.prefs();
+    (&now != before).then_some(now)
 }
 
 /// How long to keep trying to reach Neovim. A fresh editor needs time to
@@ -125,6 +173,59 @@ pub fn grep_query_to_run(before: Option<&str>, state: &AppState) -> Option<Strin
     let grep = state.grep.as_ref().filter(|grep| grep.running)?;
     let query = grep.searched.as_deref()?;
     (Some(query) != before).then(|| query.to_string())
+}
+
+/// Finds out what is installed (on a thread; it runs a few tools).
+pub fn spawn_sdk_info(tx: UnboundedSender<Action>) {
+    std::thread::spawn(move || {
+        let info = lf_mide_platform::sdk_info(&lf_mide_system::SystemRunner::new());
+        let _ = tx.send(Action::SdkLoaded(info));
+    });
+}
+
+/// Lists emulators and simulators once, now.
+pub fn spawn_device_listing(tx: UnboundedSender<Action>) {
+    std::thread::spawn(move || {
+        let listing = lf_mide_platform::list_all(&lf_mide_system::SystemRunner::new());
+        let _ = tx.send(listing_action(listing));
+    });
+}
+
+/// Lists devices every [`DEVICE_POLL`] for as long as the app runs. Every
+/// poll is reported (not only changes): the state counts polls to give up on
+/// a device that never finished starting.
+pub fn spawn_device_watch(tx: UnboundedSender<Action>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(DEVICE_POLL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let listing = tokio::task::spawn_blocking(|| {
+                lf_mide_platform::list_all(&lf_mide_system::SystemRunner::new())
+            })
+            .await;
+            let Ok(listing) = listing else { continue };
+            if tx.send(listing_action(listing)).is_err() {
+                return;
+            }
+        }
+    })
+}
+
+/// Starts or stops a device on a thread and reports how it went.
+pub fn spawn_device_command(command: DeviceCommand, tx: UnboundedSender<Action>) {
+    std::thread::spawn(move || {
+        let sys = lf_mide_system::SystemRunner::with_timeout(DEVICE_COMMAND_TIMEOUT);
+        let result = match command.action {
+            DeviceAction::Boot => lf_mide_platform::boot(&sys, &command.device),
+            DeviceAction::Stop => lf_mide_platform::stop(&sys, &command.device),
+        };
+        for action in command_result_actions(&command, result) {
+            if tx.send(action).is_err() {
+                return;
+            }
+        }
+    });
 }
 
 /// Scans the project on a thread and reports the result.
@@ -282,6 +383,102 @@ mod tests {
         assert_eq!(lost, Action::EditorLost);
         assert_eq!(rejected, Action::Status("Neovim: E37".into()));
         assert!(matches!(slow, Action::Status(m) if m.contains("did not answer")));
+    }
+
+    // --- devices ---
+
+    fn pixel() -> lf_mide_core::Device {
+        lf_mide_core::Device {
+            platform: lf_mide_core::Platform::Android,
+            id: "Pixel_8".into(),
+            name: "Pixel_8".into(),
+            detail: String::new(),
+            state: lf_mide_core::DeviceState::Stopped,
+            serial: None,
+        }
+    }
+
+    fn boot_command() -> DeviceCommand {
+        DeviceCommand {
+            action: DeviceAction::Boot,
+            device: pixel(),
+        }
+    }
+
+    #[test]
+    fn a_listing_becomes_a_devices_loaded_action() {
+        let listing = Listing {
+            devices: vec![pixel()],
+            errors: std::collections::BTreeMap::from([(
+                lf_mide_core::Platform::Ios,
+                "no xcrun".to_string(),
+            )]),
+        };
+
+        let action = listing_action(listing.clone());
+
+        assert_eq!(
+            action,
+            Action::DevicesLoaded {
+                devices: Arc::new(listing.devices),
+                errors: listing.errors
+            }
+        );
+    }
+
+    #[test]
+    fn a_finished_command_refreshes_and_a_failed_one_reports_why() {
+        let ok = command_result_actions(&boot_command(), Ok(()));
+        let failed = command_result_actions(
+            &boot_command(),
+            Err(PlatformError::Failed(
+                "could not start Pixel_8: denied".into(),
+            )),
+        );
+        let missing = command_result_actions(
+            &boot_command(),
+            Err(PlatformError::ToolMissing {
+                tool: "emulator",
+                hint: "install it",
+            }),
+        );
+
+        assert_eq!(ok, vec![Action::RefreshDevices]);
+        assert_eq!(
+            failed,
+            vec![Action::DeviceActionFailed {
+                platform: lf_mide_core::Platform::Android,
+                id: "Pixel_8".into(),
+                message: "could not start Pixel_8: denied".into(),
+            }]
+        );
+        assert!(
+            matches!(&missing[0], Action::DeviceActionFailed { message, .. } if message.contains("`emulator` was not found"))
+        );
+    }
+
+    #[test]
+    fn queued_commands_are_taken_out_of_the_state_once() {
+        let mut s = state();
+        s.pending_commands = vec![boot_command()];
+
+        let (without, commands) = take_commands(s);
+
+        assert_eq!(commands, vec![boot_command()]);
+        assert!(without.pending_commands.is_empty());
+        let (_, none) = take_commands(without);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn preferences_are_saved_only_when_they_changed() {
+        let s = state();
+        let before = s.prefs();
+
+        assert_eq!(prefs_to_save(&before, &s), None);
+        let switched = reduce(s, Action::ToggleTarget);
+        let changed = prefs_to_save(&before, &switched).unwrap();
+        assert_eq!(changed.target, Some(lf_mide_core::Platform::Ios));
     }
 
     #[test]

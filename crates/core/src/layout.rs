@@ -25,6 +25,17 @@ pub fn files_viewport_rows(terminal_height: u16) -> u16 {
         .max(1)
 }
 
+/// Lines at the top of the Devices panel before the device list: target,
+/// SDK path, tool versions, and a blank separator.
+pub const DEVICE_PANEL_HEADER_ROWS: u16 = 4;
+
+/// Device rows that fit in the Devices panel.
+pub fn devices_viewport_rows(terminal_height: u16) -> u16 {
+    files_viewport_rows(terminal_height)
+        .saturating_sub(DEVICE_PANEL_HEADER_ROWS)
+        .max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,6 +50,12 @@ mod tests {
     fn body_never_drops_below_the_minimum() {
         assert_eq!(body_rows(5), MIN_BODY_ROWS);
         assert_eq!(body_rows(0), MIN_BODY_ROWS);
+    }
+
+    #[test]
+    fn the_device_list_viewport_excludes_the_panel_header() {
+        assert_eq!(devices_viewport_rows(30), 14);
+        assert_eq!(devices_viewport_rows(0), 1);
     }
 
     #[test]

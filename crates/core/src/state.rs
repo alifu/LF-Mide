@@ -1,12 +1,14 @@
 //! Application state. Treated as immutable: the reducer returns new values.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::{Config, TerminalKind};
+use crate::devices::{Device, DeviceState, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit, TreeRow};
+use crate::prefs::ProjectPrefs;
 use crate::project::Project;
 
 /// Focusable areas of the main layout, in Tab order.
@@ -80,6 +82,33 @@ pub struct GrepState {
 /// Longest query accepted in either overlay.
 pub const MAX_QUERY_CHARS: usize = 200;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceAction {
+    Boot,
+    Stop,
+}
+
+/// A start/stop the app should perform for a device (queued by the reducer,
+/// carried out by the event loop).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceCommand {
+    pub action: DeviceAction,
+    pub device: Device,
+}
+
+/// A device that was asked to start or stop and has not got there yet.
+/// Booting takes a minute; without this the list would flip back to
+/// "stopped" on the next poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Transition {
+    pub state: DeviceState,
+    /// Polls seen since the request.
+    pub polls: u8,
+}
+
+/// Polls after which a pending start/stop is given up on (4 s each).
+pub const MAX_TRANSITION_POLLS: u8 = 45;
+
 /// Assumed until the first resize event arrives.
 pub const DEFAULT_TERMINAL_HEIGHT: u16 = 24;
 
@@ -119,6 +148,50 @@ pub struct AppState {
     pub tree_top: usize,
     pub finder: Option<FinderState>,
     pub grep: Option<GrepState>,
+    /// What the app builds and runs for.
+    pub target: Platform,
+    pub sdk: SdkInfo,
+    pub sdk_loaded: bool,
+    pub devices: Arc<Vec<Device>>,
+    pub devices_loaded: bool,
+    /// Why a platform could not be listed (tool missing, ...).
+    pub device_errors: BTreeMap<Platform, String>,
+    /// The chosen emulator/simulator per platform (AVD name / UDID).
+    pub selected_devices: BTreeMap<Platform, String>,
+    /// First visible row of the device list.
+    pub device_top: usize,
+    pub transitions: BTreeMap<(Platform, String), Transition>,
+    /// Starts/stops waiting to be carried out.
+    pub pending_commands: Vec<DeviceCommand>,
+    /// The environment overlay (SDK paths and versions) is open.
+    pub info_open: bool,
+}
+
+impl AppState {
+    /// The devices of the current build target, in list order.
+    pub fn target_devices(&self) -> Vec<&Device> {
+        self.devices
+            .iter()
+            .filter(|d| d.platform == self.target)
+            .collect()
+    }
+
+    /// The chosen device for the current target, if it is in the list.
+    pub fn selected_device(&self) -> Option<&Device> {
+        let id = self.selected_devices.get(&self.target)?;
+        self.devices
+            .iter()
+            .find(|d| d.platform == self.target && &d.id == id)
+    }
+
+    /// The choices worth remembering between runs.
+    pub fn prefs(&self) -> ProjectPrefs {
+        ProjectPrefs {
+            target: Some(self.target),
+            android_device: self.selected_devices.get(&Platform::Android).cloned(),
+            ios_device: self.selected_devices.get(&Platform::Ios).cloned(),
+        }
+    }
 }
 
 impl AppState {
@@ -146,6 +219,17 @@ impl AppState {
             tree_top: 0,
             finder: None,
             grep: None,
+            target: Platform::Android,
+            sdk: SdkInfo::default(),
+            sdk_loaded: false,
+            devices: Arc::new(Vec::new()),
+            devices_loaded: false,
+            device_errors: BTreeMap::new(),
+            selected_devices: BTreeMap::new(),
+            device_top: 0,
+            transitions: BTreeMap::new(),
+            pending_commands: Vec::new(),
+            info_open: false,
         }
     }
 }

@@ -58,6 +58,10 @@ impl std::fmt::Display for RunError {
 pub trait System: Sync {
     /// Runs `program` and waits for it, up to the implementation's timeout.
     fn run(&self, program: &str, args: &[&str]) -> Result<Output, RunError>;
+    /// Starts `program` and returns at once, leaving it running on its own
+    /// (an emulator, for example). Its output is discarded; it is not
+    /// stopped when LF-Mide exits.
+    fn spawn(&self, program: &str, args: &[&str]) -> Result<(), RunError>;
     fn env(&self, key: &str) -> Option<String>;
     fn exists(&self, path: &Path) -> bool;
     fn is_dir(&self, path: &Path) -> bool;
@@ -197,6 +201,26 @@ impl System for SystemRunner {
             stdout,
             stderr,
         })
+    }
+
+    fn spawn(&self, program: &str, args: &[&str]) -> Result<(), RunError> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            // Its own process group: Ctrl-C in our terminal must not stop it.
+            .process_group(0)
+            .spawn()
+            .map_err(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => RunError::NotFound,
+                _ => RunError::Other(err.to_string()),
+            })?;
+        // Reap it when it ends so it never lingers as a zombie.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
     }
 
     fn env(&self, key: &str) -> Option<String> {
@@ -380,6 +404,45 @@ mod tests {
 
         assert_eq!(sys.canonicalize(&link), std::fs::canonicalize(&real).ok());
         assert_eq!(sys.canonicalize(&tmp.path().join("nope")), None);
+    }
+
+    #[test]
+    fn spawn_returns_at_once_and_the_program_keeps_running() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let marker = tmp.path().join("marker");
+        let started = Instant::now();
+
+        SystemRunner::new()
+            .spawn(
+                "sh",
+                &["-c", &format!("sleep 1; touch {}", marker.display())],
+            )
+            .unwrap();
+
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "did not wait"
+        );
+        assert!(!marker.exists(), "still running");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(marker.exists(), "the detached program finished its work");
+    }
+
+    #[test]
+    fn spawn_reports_a_missing_program_and_discards_output() {
+        let sys = SystemRunner::new();
+
+        assert_eq!(
+            sys.spawn("definitely-not-a-real-tool-xyz", &[]),
+            Err(RunError::NotFound)
+        );
+        assert_eq!(
+            sys.spawn("sh", &["-c", "echo noisy; echo noisy >&2"]),
+            Ok(())
+        );
     }
 
     #[test]

@@ -23,6 +23,9 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if state.terminal_picker.is_some() {
         return picker_key(key.code);
     }
+    if state.info_open {
+        return info_key(key.code);
+    }
     match state.doctor {
         DoctorPanel::Closed => main_key(state, key.code, ctrl),
         DoctorPanel::Running | DoctorPanel::Ready(_) => doctor_key(key.code),
@@ -46,8 +49,16 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
     {
         return Some(action);
     }
+    if state.focus == Panel::Devices
+        && let Some(action) = device_key(code)
+    {
+        return Some(action);
+    }
     match code {
         KeyCode::Char('q') if !ctrl => Some(Action::Quit),
+        KeyCode::Char('t') => Some(Action::ToggleTarget),
+        KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
+        KeyCode::Char('i') => Some(Action::ToggleInfo),
         KeyCode::Char('D') => Some(Action::ToggleDoctor),
         KeyCode::Char('T') => Some(Action::OpenTerminalPicker),
         KeyCode::Char('e') => Some(Action::OpenEditor),
@@ -56,6 +67,27 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
         KeyCode::Char('R') => Some(Action::RefreshFiles),
         KeyCode::Tab => Some(Action::FocusNext),
         KeyCode::BackTab => Some(Action::FocusPrev),
+        _ => None,
+    }
+}
+
+/// Keys that act on the device list while it has focus.
+fn device_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::DeviceMove(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::DeviceMove(-1)),
+        KeyCode::Char('b') => Some(Action::BootDevice),
+        KeyCode::Char('x') => Some(Action::StopDevice),
+        KeyCode::Char('r') => Some(Action::RefreshDevices),
+        _ => None,
+    }
+}
+
+/// Keys while the environment overlay is open.
+fn info_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('i') => Some(Action::ToggleInfo),
+        KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
 }
@@ -640,5 +672,107 @@ mod tests {
         let none = grep_open("zzz", vec![], true);
 
         assert_eq!(action(&none, KeyCode::Enter), None);
+    }
+
+    // --- build target, devices, environment ---
+
+    #[test]
+    fn t_switches_the_target_d_focuses_the_devices_and_i_shows_the_environment() {
+        assert_eq!(
+            action(&closed(), KeyCode::Char('t')),
+            Some(Action::ToggleTarget)
+        );
+        assert_eq!(
+            action(&closed(), KeyCode::Char('d')),
+            Some(Action::Focus(Panel::Devices))
+        );
+        assert_eq!(
+            action(&closed(), KeyCode::Char('i')),
+            Some(Action::ToggleInfo)
+        );
+    }
+
+    fn devices_focused() -> AppState {
+        let mut s = closed();
+        s.focus = Panel::Devices;
+        s
+    }
+
+    #[test]
+    fn the_device_keys_work_only_while_the_devices_have_focus() {
+        let focused = devices_focused();
+        let elsewhere = closed();
+
+        assert_eq!(
+            action(&focused, KeyCode::Char('j')),
+            Some(Action::DeviceMove(1))
+        );
+        assert_eq!(action(&focused, KeyCode::Down), Some(Action::DeviceMove(1)));
+        assert_eq!(
+            action(&focused, KeyCode::Char('k')),
+            Some(Action::DeviceMove(-1))
+        );
+        assert_eq!(action(&focused, KeyCode::Up), Some(Action::DeviceMove(-1)));
+        assert_eq!(
+            action(&focused, KeyCode::Char('b')),
+            Some(Action::BootDevice)
+        );
+        assert_eq!(
+            action(&focused, KeyCode::Char('x')),
+            Some(Action::StopDevice)
+        );
+        assert_eq!(
+            action(&focused, KeyCode::Char('r')),
+            Some(Action::RefreshDevices)
+        );
+        for code in [KeyCode::Char('b'), KeyCode::Char('x'), KeyCode::Char('r')] {
+            assert_eq!(
+                action(&elsewhere, code),
+                None,
+                "{code:?} must not start or stop devices from the tree"
+            );
+        }
+    }
+
+    #[test]
+    fn global_keys_still_work_from_the_devices_panel() {
+        let focused = devices_focused();
+
+        assert_eq!(action(&focused, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            action(&focused, KeyCode::Char('t')),
+            Some(Action::ToggleTarget)
+        );
+        assert_eq!(
+            action(&focused, KeyCode::Char('f')),
+            Some(Action::OpenFinder)
+        );
+        assert_eq!(action(&focused, KeyCode::Tab), Some(Action::FocusNext));
+        assert_eq!(
+            action(&focused, KeyCode::Char('h')),
+            None,
+            "the tree's collapse key is not a device key"
+        );
+    }
+
+    #[test]
+    fn the_environment_overlay_closes_with_escape_or_i_and_swallows_other_keys() {
+        let open = reduce(closed(), Action::ToggleInfo);
+
+        assert_eq!(action(&open, KeyCode::Esc), Some(Action::ToggleInfo));
+        assert_eq!(action(&open, KeyCode::Char('i')), Some(Action::ToggleInfo));
+        assert_eq!(action(&open, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            action_for(&open, press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        );
+        for code in [
+            KeyCode::Char('t'),
+            KeyCode::Char('f'),
+            KeyCode::Tab,
+            KeyCode::Char('j'),
+        ] {
+            assert_eq!(action(&open, code), None, "{code:?}");
+        }
     }
 }

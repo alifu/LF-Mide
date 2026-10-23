@@ -1,14 +1,19 @@
 //! Pure state transitions.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::action::Action;
 use crate::config::{Config, TerminalKind};
+use crate::devices::{Device, DeviceState, Platform};
 use crate::doctor::{Report, popup_content_rows};
-use crate::layout::files_viewport_rows;
+use crate::layout::{devices_viewport_rows, files_viewport_rows};
 use crate::nav::{parent_row, tree_rows};
-use crate::state::{AppState, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS};
+use crate::state::{
+    AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
+    MAX_TRANSITION_POLLS, Transition,
+};
 
 /// Consumes `state` and returns the state that results from applying
 /// `action`. Taking ownership keeps updates pure without copying the whole
@@ -178,6 +183,95 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 None => state,
             },
         },
+        Action::Focus(panel) => AppState {
+            focus: panel,
+            ..state
+        },
+        Action::ToggleTarget => show_selected_device(AppState {
+            target: state.target.other(),
+            device_top: 0,
+            ..state
+        }),
+        Action::SdkLoaded(sdk) => AppState {
+            sdk,
+            sdk_loaded: true,
+            ..state
+        },
+        Action::DevicesLoaded { devices, errors } => {
+            let mut transitions = state.transitions.clone();
+            let merged = apply_transitions(&devices, &errors, &mut transitions);
+            let status = settled_status(&state, &merged, &transitions);
+            reconcile_selection(AppState {
+                devices: Arc::new(merged),
+                devices_loaded: true,
+                device_errors: errors,
+                transitions,
+                status,
+                ..state
+            })
+        }
+        // The event loop starts the listing; the list itself is unchanged.
+        Action::RefreshDevices => state,
+        Action::DeviceMove(delta) => {
+            let ids: Vec<String> = state
+                .target_devices()
+                .iter()
+                .map(|d| d.id.clone())
+                .collect();
+            if ids.is_empty() {
+                return state;
+            }
+            let current = state
+                .selected_devices
+                .get(&state.target)
+                .and_then(|id| ids.iter().position(|candidate| candidate == id))
+                .unwrap_or(0);
+            let next = moved(current, delta, ids.len());
+            let mut selected_devices = state.selected_devices.clone();
+            selected_devices.insert(state.target, ids[next].clone());
+            show_selected_device(AppState {
+                selected_devices,
+                ..state
+            })
+        }
+        Action::BootDevice => start_or_stop(state, DeviceAction::Boot),
+        Action::StopDevice => start_or_stop(state, DeviceAction::Stop),
+        Action::DeviceActionFailed {
+            platform,
+            id,
+            message,
+        } => {
+            let mut transitions = state.transitions.clone();
+            let undone = transitions.remove(&(platform, id.clone()));
+            // Put the device back to what it was before we asked.
+            let restored = undone.map(|t| match t.state {
+                DeviceState::Starting => DeviceState::Stopped,
+                _ => DeviceState::Running,
+            });
+            AppState {
+                devices: Arc::new(with_state(&state.devices, platform, &id, restored)),
+                transitions,
+                status: Some(message),
+                ..state
+            }
+        }
+        Action::ToggleInfo => AppState {
+            info_open: !state.info_open,
+            ..state
+        },
+        Action::PrefsLoaded(prefs) => {
+            let mut selected_devices = state.selected_devices.clone();
+            for platform in Platform::ALL {
+                if let Some(id) = prefs.device_for(platform) {
+                    selected_devices.insert(platform, id.to_string());
+                }
+            }
+            AppState {
+                target: prefs.target.unwrap_or(state.target),
+                selected_devices,
+                ..state
+            }
+        }
         Action::OpenFinder => AppState {
             finder: Some(FinderState::default()),
             grep: None,
@@ -286,13 +380,13 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         }
         Action::ViewportChanged(terminal_height) => {
             let selected = state.tree_selected;
-            let resized = select_row(
+            let resized = show_selected_device(select_row(
                 AppState {
                     terminal_height,
                     ..state
                 },
                 selected,
-            );
+            ));
             let DoctorPanel::Ready(report) = &resized.doctor else {
                 return resized;
             };
@@ -302,6 +396,224 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 ..resized
             }
         }
+    }
+}
+
+/// The status line after a poll: a "Starting X…" / "Stopping X…" message
+/// whose request the listing has just settled becomes "X is running" /
+/// "X stopped". Any other message is kept.
+fn settled_status(
+    state: &AppState,
+    merged: &[Device],
+    transitions: &BTreeMap<(Platform, String), Transition>,
+) -> Option<String> {
+    let settled = state
+        .transitions
+        .iter()
+        .filter(|(key, _)| !transitions.contains_key(*key))
+        .find_map(|((platform, id), pending)| {
+            let device = merged
+                .iter()
+                .find(|d| d.platform == *platform && &d.id == id)?;
+            let (verb, done, gave_up, expected) = match pending.state {
+                DeviceState::Starting => (
+                    "Starting",
+                    "is running",
+                    "did not start",
+                    DeviceState::Running,
+                ),
+                _ => ("Stopping", "stopped", "did not stop", DeviceState::Stopped),
+            };
+            let outcome = if device.state == expected {
+                done
+            } else {
+                gave_up
+            };
+            (state.status.as_deref() == Some(&format!("{verb} {}…", device.name)))
+                .then(|| format!("{} {outcome}", device.name))
+        });
+    settled.or_else(|| state.status.clone())
+}
+
+/// The device list with pending starts/stops applied: a device we asked to
+/// start (or stop) keeps showing as starting (stopping) until the listing
+/// confirms it, or [`MAX_TRANSITION_POLLS`] polls pass.
+fn apply_transitions(
+    listed: &[Device],
+    errors: &BTreeMap<Platform, String>,
+    transitions: &mut BTreeMap<(Platform, String), Transition>,
+) -> Vec<Device> {
+    // Forget requests for devices that no longer exist. A platform that
+    // failed to list says nothing about its devices, so its requests stay.
+    transitions.retain(|(platform, id), _| {
+        errors.contains_key(platform)
+            || listed
+                .iter()
+                .any(|d| d.platform == *platform && &d.id == id)
+    });
+    listed
+        .iter()
+        .map(|device| {
+            let key = (device.platform, device.id.clone());
+            let Some(pending) = transitions.get(&key).copied() else {
+                return device.clone();
+            };
+            let confirmed = match pending.state {
+                DeviceState::Starting => device.state == DeviceState::Running,
+                _ => device.state == DeviceState::Stopped,
+            };
+            let polls = pending.polls.saturating_add(1);
+            if confirmed || polls > MAX_TRANSITION_POLLS {
+                transitions.remove(&key);
+                return device.clone();
+            }
+            transitions.insert(key, Transition { polls, ..pending });
+            Device {
+                state: pending.state,
+                ..device.clone()
+            }
+        })
+        .collect()
+}
+
+/// Keeps each platform's chosen device if it is still listed, otherwise
+/// picks a default. A platform that could not be listed at all keeps its
+/// remembered choice: a missing tool today is not a reason to forget it.
+fn reconcile_selection(state: AppState) -> AppState {
+    let mut selected_devices = state.selected_devices.clone();
+    for platform in Platform::ALL {
+        let listed: Vec<&Device> = state
+            .devices
+            .iter()
+            .filter(|d| d.platform == platform)
+            .collect();
+        if listed.is_empty() && state.device_errors.contains_key(&platform) {
+            continue;
+        }
+        let still_there = selected_devices
+            .get(&platform)
+            .is_some_and(|id| listed.iter().any(|d| &d.id == id));
+        if still_there {
+            continue;
+        }
+        match default_device(platform, &listed) {
+            Some(device) => selected_devices.insert(platform, device.id.clone()),
+            None => selected_devices.remove(&platform),
+        };
+    }
+    show_selected_device(AppState {
+        selected_devices,
+        ..state
+    })
+}
+
+/// A running device if there is one; on iOS the first iPhone (iPads sort
+/// first alphabetically); else the first.
+fn default_device<'a>(platform: Platform, listed: &[&'a Device]) -> Option<&'a Device> {
+    listed
+        .iter()
+        .find(|d| d.is_running())
+        .or_else(|| {
+            (platform == Platform::Ios)
+                .then(|| listed.iter().find(|d| d.name.starts_with("iPhone")))
+                .flatten()
+        })
+        .or_else(|| listed.first())
+        .copied()
+}
+
+/// Scrolls the device list just enough to show the chosen device.
+fn show_selected_device(state: AppState) -> AppState {
+    let devices = state.target_devices();
+    let row = state
+        .selected_devices
+        .get(&state.target)
+        .and_then(|id| devices.iter().position(|d| &d.id == id))
+        .unwrap_or(0);
+    let len = devices.len();
+    let visible = usize::from(devices_viewport_rows(state.terminal_height));
+    let top = if row < state.device_top {
+        row
+    } else if row >= state.device_top + visible {
+        row + 1 - visible
+    } else {
+        state.device_top
+    };
+    AppState {
+        device_top: top.min(len.saturating_sub(visible)),
+        ..state
+    }
+}
+
+/// `devices` with one device's state changed (`None` leaves it as is).
+fn with_state(
+    devices: &[Device],
+    platform: Platform,
+    id: &str,
+    state: Option<DeviceState>,
+) -> Vec<Device> {
+    devices
+        .iter()
+        .map(|d| match state {
+            Some(state) if d.platform == platform && d.id == id => Device { state, ..d.clone() },
+            _ => d.clone(),
+        })
+        .collect()
+}
+
+/// Starts or stops the chosen device: records that we asked, shows it as
+/// starting/stopping at once, and queues the command for the event loop.
+fn start_or_stop(state: AppState, action: DeviceAction) -> AppState {
+    let Some(device) = state.selected_device().cloned() else {
+        return AppState {
+            status: Some("No device selected".to_string()),
+            ..state
+        };
+    };
+    let refusal = match (action, device.state) {
+        (DeviceAction::Boot, DeviceState::Stopped) | (DeviceAction::Stop, DeviceState::Running) => {
+            None
+        }
+        (DeviceAction::Boot, DeviceState::Running) => Some("is already running"),
+        (DeviceAction::Boot, DeviceState::Starting) => Some("is already starting"),
+        (_, DeviceState::Stopping) => Some("is shutting down"),
+        (DeviceAction::Stop, _) => Some("is not running"),
+    };
+    if let Some(reason) = refusal {
+        return AppState {
+            status: Some(format!("{} {reason}", device.name)),
+            ..state
+        };
+    }
+
+    let (pending, verb) = match action {
+        DeviceAction::Boot => (DeviceState::Starting, "Starting"),
+        DeviceAction::Stop => (DeviceState::Stopping, "Stopping"),
+    };
+    let mut transitions = state.transitions.clone();
+    transitions.insert(
+        (device.platform, device.id.clone()),
+        Transition {
+            state: pending,
+            polls: 0,
+        },
+    );
+    let mut pending_commands = state.pending_commands.clone();
+    pending_commands.push(DeviceCommand {
+        action,
+        device: device.clone(),
+    });
+    AppState {
+        devices: Arc::new(with_state(
+            &state.devices,
+            device.platform,
+            &device.id,
+            Some(pending),
+        )),
+        transitions,
+        pending_commands,
+        status: Some(format!("{verb} {}…", device.name)),
+        ..state
     }
 }
 
@@ -1248,5 +1560,586 @@ mod tests {
         assert_eq!(shown.status.as_deref(), Some("Opened src/App.kt"));
         assert!(!lost.editor_ready);
         assert!(!relaunched.editor_ready, "a new Neovim is unproven");
+    }
+
+    // --- build target, devices and their start/stop ---
+
+    use crate::devices::{DeviceState as DState, SdkInfo};
+    use crate::prefs::ProjectPrefs;
+
+    fn dev(platform: Platform, id: &str, name: &str, state: DState) -> Device {
+        Device {
+            platform,
+            id: id.into(),
+            name: name.into(),
+            detail: String::new(),
+            state,
+            serial: (platform == Platform::Android && state == DState::Running)
+                .then(|| "emulator-5554".to_string()),
+        }
+    }
+
+    fn pixel(state: DState) -> Device {
+        dev(Platform::Android, "Pixel_8", "Pixel_8", state)
+    }
+
+    fn sample_devices() -> Vec<Device> {
+        vec![
+            dev(Platform::Android, "Pixel_8", "Pixel_8", DState::Stopped),
+            dev(Platform::Android, "Tablet", "Tablet", DState::Stopped),
+            dev(
+                Platform::Ios,
+                "11111111-1111-1111-1111-111111111111",
+                "iPad (A16)",
+                DState::Stopped,
+            ),
+            dev(
+                Platform::Ios,
+                "22222222-2222-2222-2222-222222222222",
+                "iPhone 17",
+                DState::Stopped,
+            ),
+            dev(
+                Platform::Ios,
+                "33333333-3333-3333-3333-333333333333",
+                "iPhone 17 Pro",
+                DState::Stopped,
+            ),
+        ]
+    }
+
+    fn with_devices(devices: Vec<Device>) -> AppState {
+        reduce(
+            state(),
+            Action::DevicesLoaded {
+                devices: Arc::new(devices),
+                errors: BTreeMap::new(),
+            },
+        )
+    }
+
+    fn selected_id(s: &AppState, platform: Platform) -> Option<&str> {
+        s.selected_devices.get(&platform).map(String::as_str)
+    }
+
+    #[test]
+    fn a_new_session_targets_android_with_nothing_loaded() {
+        let s = state();
+
+        assert_eq!(s.target, Platform::Android);
+        assert!(!s.devices_loaded && !s.sdk_loaded && s.devices.is_empty());
+        assert!(s.selected_device().is_none() && s.pending_commands.is_empty());
+    }
+
+    #[test]
+    fn toggling_the_target_flips_between_the_platforms() {
+        let ios = reduce(state(), Action::ToggleTarget);
+        let android = reduce(ios.clone(), Action::ToggleTarget);
+
+        assert_eq!(ios.target, Platform::Ios);
+        assert_eq!(android.target, Platform::Android);
+    }
+
+    #[test]
+    fn the_environment_overlay_toggles() {
+        let open = reduce(state(), Action::ToggleInfo);
+
+        assert!(open.info_open);
+        assert!(!reduce(open, Action::ToggleInfo).info_open);
+    }
+
+    #[test]
+    fn focus_can_be_set_directly() {
+        assert_eq!(
+            reduce(state(), Action::Focus(Panel::Devices)).focus,
+            Panel::Devices
+        );
+    }
+
+    #[test]
+    fn sdk_facts_are_stored() {
+        let mut sdk = SdkInfo::default();
+        sdk.ios.version = Some("Xcode 26.5".into());
+
+        let s = reduce(state(), Action::SdkLoaded(sdk.clone()));
+
+        assert!(s.sdk_loaded);
+        assert_eq!(s.sdk, sdk);
+    }
+
+    #[test]
+    fn loading_devices_picks_a_sensible_default_per_platform() {
+        let s = with_devices(sample_devices());
+
+        assert!(s.devices_loaded);
+        assert_eq!(selected_id(&s, Platform::Android), Some("Pixel_8"));
+        assert_eq!(
+            selected_id(&s, Platform::Ios),
+            Some("22222222-2222-2222-2222-222222222222"),
+            "the first iPhone, not the iPad that sorts first"
+        );
+    }
+
+    #[test]
+    fn a_running_device_is_preferred_as_the_default() {
+        let mut devices = sample_devices();
+        devices[1].state = DState::Running;
+        devices[4].state = DState::Running;
+
+        let s = with_devices(devices);
+
+        assert_eq!(selected_id(&s, Platform::Android), Some("Tablet"));
+        assert_eq!(
+            selected_id(&s, Platform::Ios),
+            Some("33333333-3333-3333-3333-333333333333")
+        );
+    }
+
+    #[test]
+    fn an_existing_choice_survives_a_refresh_while_the_device_exists() {
+        let mut s = with_devices(sample_devices());
+        s = reduce(s, Action::DeviceMove(1));
+        assert_eq!(selected_id(&s, Platform::Android), Some("Tablet"));
+
+        let refreshed = reduce(
+            s,
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(selected_id(&refreshed, Platform::Android), Some("Tablet"));
+    }
+
+    #[test]
+    fn a_vanished_device_is_replaced_by_a_default() {
+        let mut s = with_devices(sample_devices());
+        s = reduce(s, Action::DeviceMove(1));
+        let remaining: Vec<Device> = sample_devices()
+            .into_iter()
+            .filter(|d| d.id != "Tablet")
+            .collect();
+
+        let after = reduce(
+            s,
+            Action::DevicesLoaded {
+                devices: Arc::new(remaining),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(selected_id(&after, Platform::Android), Some("Pixel_8"));
+    }
+
+    #[test]
+    fn remembered_choices_apply_once_the_devices_load() {
+        let prefs = ProjectPrefs {
+            target: Some(Platform::Ios),
+            android_device: Some("Tablet".into()),
+            ios_device: Some("33333333-3333-3333-3333-333333333333".into()),
+        };
+
+        let loaded = reduce(state(), Action::PrefsLoaded(prefs));
+        assert_eq!(loaded.target, Platform::Ios);
+        let with_list = reduce(
+            loaded,
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(selected_id(&with_list, Platform::Android), Some("Tablet"));
+        assert_eq!(
+            selected_id(&with_list, Platform::Ios),
+            Some("33333333-3333-3333-3333-333333333333")
+        );
+    }
+
+    #[test]
+    fn a_platform_that_could_not_be_listed_keeps_its_remembered_choice() {
+        let prefs = ProjectPrefs {
+            android_device: Some("Tablet".into()),
+            ..ProjectPrefs::default()
+        };
+        let loaded = reduce(state(), Action::PrefsLoaded(prefs));
+        let only_ios: Vec<Device> = sample_devices()
+            .into_iter()
+            .filter(|d| d.platform == Platform::Ios)
+            .collect();
+        let errors = BTreeMap::from([(Platform::Android, "emulator not found".to_string())]);
+
+        let after = reduce(
+            loaded,
+            Action::DevicesLoaded {
+                devices: Arc::new(only_ios),
+                errors,
+            },
+        );
+
+        assert_eq!(
+            selected_id(&after, Platform::Android),
+            Some("Tablet"),
+            "not forgotten just because adb is missing today"
+        );
+        assert_eq!(
+            after.device_errors[&Platform::Android],
+            "emulator not found"
+        );
+    }
+
+    #[test]
+    fn the_prefs_to_remember_reflect_the_target_and_choices() {
+        let mut s = with_devices(sample_devices());
+        s = reduce(s, Action::ToggleTarget);
+
+        let prefs = s.prefs();
+
+        assert_eq!(prefs.target, Some(Platform::Ios));
+        assert_eq!(prefs.android_device.as_deref(), Some("Pixel_8"));
+        assert_eq!(
+            prefs.ios_device.as_deref(),
+            Some("22222222-2222-2222-2222-222222222222")
+        );
+    }
+
+    #[test]
+    fn moving_walks_the_current_targets_devices_only() {
+        let s = with_devices(sample_devices());
+
+        let down = reduce(s.clone(), Action::DeviceMove(1));
+        let past_end = reduce(s.clone(), Action::DeviceMove(50));
+        let up = reduce(s.clone(), Action::DeviceMove(-5));
+        let ios = reduce(reduce(s, Action::ToggleTarget), Action::DeviceMove(1));
+
+        assert_eq!(selected_id(&down, Platform::Android), Some("Tablet"));
+        assert_eq!(
+            selected_id(&past_end, Platform::Android),
+            Some("Tablet"),
+            "clamped to the last Android device"
+        );
+        assert_eq!(selected_id(&up, Platform::Android), Some("Pixel_8"));
+        assert_eq!(
+            selected_id(&ios, Platform::Ios),
+            Some("33333333-3333-3333-3333-333333333333")
+        );
+        assert_eq!(
+            selected_id(&ios, Platform::Android),
+            Some("Pixel_8"),
+            "the other platform keeps its choice"
+        );
+    }
+
+    #[test]
+    fn moving_with_no_devices_does_nothing() {
+        assert_eq!(reduce(state(), Action::DeviceMove(1)), state());
+    }
+
+    #[test]
+    fn the_device_list_scrolls_to_keep_the_choice_visible() {
+        let many: Vec<Device> = (0..40)
+            .map(|i| {
+                dev(
+                    Platform::Android,
+                    &format!("avd{i:02}"),
+                    &format!("avd{i:02}"),
+                    DState::Stopped,
+                )
+            })
+            .collect();
+        let s = reduce(with_devices(many), Action::ViewportChanged(30)); // 14 rows
+
+        let far = reduce(s.clone(), Action::DeviceMove(30));
+        let back = reduce(far.clone(), Action::DeviceMove(-30));
+
+        assert_eq!(crate::layout::devices_viewport_rows(30), 14);
+        assert_eq!(far.device_top, 30 + 1 - 14);
+        assert_eq!(back.device_top, 0);
+    }
+
+    // --- start and stop ---
+
+    #[test]
+    fn booting_marks_the_device_starting_and_queues_the_command() {
+        let s = with_devices(sample_devices());
+
+        let booting = reduce(s, Action::BootDevice);
+
+        assert_eq!(booting.pending_commands.len(), 1);
+        assert_eq!(booting.pending_commands[0].action, DeviceAction::Boot);
+        assert_eq!(booting.pending_commands[0].device.id, "Pixel_8");
+        assert!(booting.status.unwrap().contains("Starting Pixel_8"));
+        assert!(
+            booting
+                .transitions
+                .contains_key(&(Platform::Android, "Pixel_8".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_list_shows_a_device_as_starting_while_it_boots() {
+        let booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+
+        let polled = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(
+            polled.selected_device().unwrap().state,
+            DState::Starting,
+            "still stopped for adb, but we know it was asked to start"
+        );
+    }
+
+    #[test]
+    fn a_running_device_ends_the_wait() {
+        let booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+        let mut up = sample_devices();
+        up[0].state = DState::Running;
+
+        let after = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(up),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(after.selected_device().unwrap().state, DState::Running);
+        assert!(after.transitions.is_empty());
+    }
+
+    #[test]
+    fn confirming_a_start_replaces_the_starting_message() {
+        let booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+        let mut up = sample_devices();
+        up[0].state = DState::Running;
+
+        let after = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(up),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(after.status.as_deref(), Some("Pixel_8 is running"));
+    }
+
+    #[test]
+    fn confirming_a_start_leaves_an_unrelated_message_alone() {
+        let mut booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+        booting.status = Some("Opened src/App.kt".to_string());
+        let mut up = sample_devices();
+        up[0].state = DState::Running;
+
+        let after = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(up),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(after.status.as_deref(), Some("Opened src/App.kt"));
+    }
+
+    #[test]
+    fn a_device_that_never_comes_up_is_eventually_shown_as_stopped_again() {
+        let mut s = reduce(with_devices(sample_devices()), Action::BootDevice);
+
+        for _ in 0..=MAX_TRANSITION_POLLS {
+            s = reduce(
+                s,
+                Action::DevicesLoaded {
+                    devices: Arc::new(sample_devices()),
+                    errors: BTreeMap::new(),
+                },
+            );
+        }
+
+        assert_eq!(s.selected_device().unwrap().state, DState::Stopped);
+        assert!(s.transitions.is_empty());
+    }
+
+    #[test]
+    fn giving_up_on_a_start_says_so() {
+        let mut s = reduce(with_devices(sample_devices()), Action::BootDevice);
+
+        for _ in 0..=MAX_TRANSITION_POLLS {
+            s = reduce(
+                s,
+                Action::DevicesLoaded {
+                    devices: Arc::new(sample_devices()),
+                    errors: BTreeMap::new(),
+                },
+            );
+        }
+
+        assert_eq!(s.status.as_deref(), Some("Pixel_8 did not start"));
+    }
+
+    #[test]
+    fn a_failed_listing_keeps_the_pending_start_of_that_platform() {
+        let booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+        let mut errors = BTreeMap::new();
+        errors.insert(Platform::Android, "emulator: timed out".to_string());
+
+        let after = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(Vec::new()),
+                errors,
+            },
+        );
+        let recovered = reduce(
+            after,
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(recovered.selected_device().unwrap().state, DState::Starting);
+    }
+
+    #[test]
+    fn stopping_waits_for_the_device_to_actually_stop() {
+        let mut devices = sample_devices();
+        devices[0].state = DState::Running;
+        devices[0].serial = Some("emulator-5554".into());
+        let s = with_devices(devices.clone());
+
+        let stopping = reduce(s, Action::StopDevice);
+        let still_up = reduce(
+            stopping.clone(),
+            Action::DevicesLoaded {
+                devices: Arc::new(devices),
+                errors: BTreeMap::new(),
+            },
+        );
+        let down = reduce(
+            still_up.clone(),
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(stopping.pending_commands[0].action, DeviceAction::Stop);
+        assert_eq!(still_up.selected_device().unwrap().state, DState::Stopping);
+        assert_eq!(down.selected_device().unwrap().state, DState::Stopped);
+        assert!(down.transitions.is_empty());
+    }
+
+    #[test]
+    fn boot_and_stop_are_refused_when_pointless() {
+        let none = reduce(state(), Action::BootDevice);
+        let mut running = sample_devices();
+        running[0].state = DState::Running;
+        let already = reduce(with_devices(running), Action::BootDevice);
+        let not_running = reduce(with_devices(sample_devices()), Action::StopDevice);
+
+        assert!(
+            none.pending_commands.is_empty()
+                && none.status.as_deref().unwrap().contains("No device")
+        );
+        assert!(
+            already.pending_commands.is_empty()
+                && already
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("already running")
+        );
+        assert!(
+            not_running.pending_commands.is_empty()
+                && not_running
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("not running")
+        );
+    }
+
+    #[test]
+    fn a_device_already_starting_cannot_be_started_twice() {
+        let once = reduce(with_devices(sample_devices()), Action::BootDevice);
+        let polled = reduce(
+            once,
+            Action::DevicesLoaded {
+                devices: Arc::new(sample_devices()),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        let twice = reduce(polled, Action::BootDevice);
+
+        assert_eq!(
+            twice.pending_commands.len(),
+            1,
+            "still just the first request"
+        );
+    }
+
+    #[test]
+    fn a_failed_start_clears_the_wait_and_says_why() {
+        let booting = reduce(with_devices(sample_devices()), Action::BootDevice);
+
+        let failed = reduce(
+            booting,
+            Action::DeviceActionFailed {
+                platform: Platform::Android,
+                id: "Pixel_8".into(),
+                message: "emulator: denied".into(),
+            },
+        );
+
+        assert!(failed.transitions.is_empty());
+        assert_eq!(failed.status.as_deref(), Some("emulator: denied"));
+    }
+
+    #[test]
+    fn refresh_asks_for_a_new_listing_without_changing_the_list() {
+        let s = with_devices(sample_devices());
+
+        assert_eq!(reduce(s.clone(), Action::RefreshDevices), s);
+    }
+
+    #[test]
+    fn the_device_selection_stays_visible_when_the_terminal_shrinks() {
+        let many: Vec<Device> = (0..40)
+            .map(|i| {
+                dev(
+                    Platform::Android,
+                    &format!("avd{i:02}"),
+                    &format!("avd{i:02}"),
+                    DState::Stopped,
+                )
+            })
+            .collect();
+        let s = reduce(
+            reduce(with_devices(many), Action::ViewportChanged(60)),
+            Action::DeviceMove(30),
+        );
+
+        let smaller = reduce(s, Action::ViewportChanged(24));
+
+        let rows = usize::from(crate::layout::devices_viewport_rows(24));
+        assert!(
+            30 >= smaller.device_top && 30 < smaller.device_top + rows,
+            "top {} rows {rows}",
+            smaller.device_top
+        );
+    }
+
+    #[test]
+    fn pixel_helper_is_used() {
+        assert_eq!(pixel(DState::Stopped).id, "Pixel_8");
     }
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use directories::{BaseDirs, ProjectDirs};
 use lf_mide_core::config::PROJECT_CONFIG_FILE;
+use lf_mide_core::prefs_file_name;
 
 const APP_NAME: &str = "lf-mide";
 const CONFIG_FILE: &str = "config.toml";
@@ -22,6 +23,23 @@ fn global_config_from(xdg_config_home: Option<PathBuf>, home: Option<PathBuf>) -
         .filter(|dir| dir.is_absolute())
         .or_else(|| home.map(|home| home.join(".config")))?;
     Some(base.join(APP_NAME).join(CONFIG_FILE))
+}
+
+/// Where this project's remembered build target and devices live:
+/// `<config dir>/projects/<name>-<hash>.toml`, next to the global config and
+/// outside the repository.
+pub fn project_prefs(root: &Path, project_name: &str) -> Option<PathBuf> {
+    Some(project_prefs_in(
+        global_config()?.parent()?,
+        root,
+        project_name,
+    ))
+}
+
+fn project_prefs_in(config_dir: &Path, root: &Path, project_name: &str) -> PathBuf {
+    config_dir
+        .join("projects")
+        .join(prefs_file_name(root, project_name))
 }
 
 pub fn project_config(root: &Path) -> PathBuf {
@@ -120,6 +138,35 @@ mod tests {
     #[test]
     fn global_config_is_none_without_any_base() {
         assert_eq!(global_config_from(None, None), None);
+    }
+
+    #[test]
+    fn project_preferences_live_beside_the_global_config_not_in_the_project() {
+        let path = project_prefs_in(
+            Path::new("/home/u/.config/lf-mide"),
+            Path::new("/work/pos"),
+            "pos",
+        );
+
+        assert!(
+            path.starts_with("/home/u/.config/lf-mide/projects"),
+            "{path:?}"
+        );
+        assert!(!path.starts_with("/work/pos"));
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("pos-")
+        );
+        assert_ne!(
+            path,
+            project_prefs_in(
+                Path::new("/home/u/.config/lf-mide"),
+                Path::new("/work/other/pos"),
+                "pos"
+            )
+        );
     }
 
     #[test]

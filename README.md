@@ -76,6 +76,9 @@ Keys so far:
 | `e` | open Neovim in a split pane (do this first) |
 | `f` | fuzzy-find a file and open it (`Ctrl-n`/`Ctrl-p` or arrows move, `Enter` opens, `Esc` cancels) |
 | `/` | search the project with ripgrep (`Enter` searches, then `Enter` opens the highlighted hit at its line) |
+| `t` | switch the build target between Android and iOS |
+| `d` | focus the Devices panel |
+| `i` | show the environment (SDK and Xcode locations and versions) |
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
@@ -84,6 +87,21 @@ Keys so far:
 In the file tree (focused by default): `j`/`k` or arrows move, `l`/`Right` expands, `h`/`Left` collapses or steps out,
 `Enter` opens a file or toggles a directory, `g`/`G` jump to top/bottom, `PageUp`/`PageDown` page.
 In the doctor panel: `j`/`k` or arrows scroll, `PageUp`/`PageDown` page, `r` re-runs the checks, `Esc` or `D` closes.
+
+In the Devices panel: `j`/`k` or arrows choose a device, `b` boots it, `x` shuts it down, `r` refreshes the list.
+
+## Devices and targets
+
+The header shows the chosen target and device. The Devices panel lists the Android emulators (AVDs) or iOS simulators
+for the current target, with a marker for stopped, starting, running and stopping. Lists refresh every 4 seconds, so an
+emulator you start elsewhere shows up too.
+
+- Android: `emulator -list-avds` and `adb devices -l`. `b` starts the AVD, `x` shuts it down through `adb emu kill`.
+- iOS: `xcrun simctl list devices available --json`. `b` boots the simulator and opens the Simulator app, `x` shuts it down.
+- Tools are taken from `ANDROID_HOME` / `ANDROID_SDK_ROOT` / the default SDK location and then `PATH`. A path found in
+  the project's `local.properties` is never used to run anything.
+- The chosen target and devices are remembered per project in a private file under the LF-Mide config folder, never
+  inside your project.
 
 ## Navigating the project
 
@@ -167,6 +185,7 @@ crates/
 ├── doctor/           # dependency checks behind `lf-mide doctor`
 ├── editor/           # shows a file in the running Neovim over its RPC socket
 ├── nav/              # project scan, fuzzy finder, ripgrep search
+├── platform/         # Android SDK / emulators and Xcode / simulators: list, boot, stop
 ├── system/           # running commands / reading the machine behind a trait (shared, testable)
 ├── terminal/         # terminal detection and split-pane launching
 ├── ui/               # ratatui rendering (pure view of the state)
@@ -175,5 +194,5 @@ spikes/
 └── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
 ```
 
-More crates (`platform`, `editor`) are added as the roadmap progresses.
+More crates are added as the roadmap progresses.
 

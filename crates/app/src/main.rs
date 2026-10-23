@@ -47,13 +47,20 @@ async fn main() -> Result<()> {
         global.as_deref(),
         Some(&paths::project_config(&project.root)),
     )?;
-    let _log_guard = init_logging();
+    let log_guard = init_logging();
     tracing::info!(root = %project.root.display(), "starting");
 
     let terminal = ratatui::try_init().wrap_err("cannot set up the terminal")?;
     exit_on_panic();
     let result = event_loop::run(terminal, AppState::new(project, config)).await;
     ratatui::restore();
+    drop(log_guard);
+    // Returning from `main` would wait for device listings still running on
+    // the blocking pool (each can take seconds); the terminal is already
+    // restored, so leave now.
+    if result.is_ok() {
+        std::process::exit(0);
+    }
     result
 }
 

@@ -1,6 +1,7 @@
 //! Rendering for LF-Mide. Every function here is a pure view of
 //! [`AppState`]; nothing in this crate changes state.
 
+mod devices;
 mod search;
 #[cfg(test)]
 mod testing;
@@ -55,19 +56,14 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Panel::Editor,
         "Neovim runs in a split pane (mode D)",
     );
-    render_placeholder(
-        frame,
-        devices,
-        state,
-        Panel::Devices,
-        "Emulators & simulators (Phase 3)",
-    );
+    devices::render_devices(frame, devices, state);
     render_bottom(frame, bottom, state);
     render_status(frame, status, state);
     render_doctor(frame, state);
     render_terminal_picker(frame, state);
     search::render_finder(frame, state);
     search::render_grep(frame, state);
+    devices::render_info(frame, state);
 }
 
 /// Who will host Neovim: the configured terminal, or what `Auto` found.
@@ -256,6 +252,10 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
         Span::styled(
             format!("  terminal: {}", terminal_summary(state)),
+            Style::new().fg(MUTED),
+        ),
+        Span::styled(
+            format!("  target: {}", devices::target_summary(state)),
             Style::new().fg(MUTED),
         ),
     ]);

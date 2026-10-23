@@ -1,0 +1,4 @@
+INFO    | Storing crashdata in: /tmp/android-user/emu-crash-36.1.9.db, detection is enabled for process: 1234
+Medium_Phone_API_36
+Pixel_8_API_35
+INFO    | Duplicate loglines will be removed, if you wish to see each individual line launch with the -log-nodedup flag.

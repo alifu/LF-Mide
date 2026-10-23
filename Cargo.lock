@@ -994,6 +994,7 @@ dependencies = [
  "lf-mide-doctor",
  "lf-mide-editor",
  "lf-mide-nav",
+ "lf-mide-platform",
  "lf-mide-system",
  "lf-mide-terminal",
  "lf-mide-ui",
@@ -1023,6 +1024,7 @@ name = "lf-mide-doctor"
 version = "0.1.0"
 dependencies = [
  "lf-mide-core",
+ "lf-mide-platform",
  "lf-mide-system",
  "serde_json",
  "tempfile",
@@ -1048,6 +1050,16 @@ dependencies = [
  "nucleo-matcher",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lf-mide-platform"
+version = "0.1.0"
+dependencies = [
+ "lf-mide-core",
+ "lf-mide-system",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

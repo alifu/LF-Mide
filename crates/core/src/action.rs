@@ -1,11 +1,17 @@
 //! Everything that can change [`AppState`](crate::AppState).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::config::TerminalKind;
+use std::collections::BTreeMap;
+
+use crate::devices::{Device, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit};
+use crate::prefs::ProjectPrefs;
 use crate::state::BranchInfo;
+use crate::state::Panel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -80,4 +86,33 @@ pub enum Action {
         query: String,
         result: Result<Vec<GrepHit>, String>,
     },
+    /// Give this panel the focus.
+    Focus(Panel),
+    /// Switch the build target between Android and iOS.
+    ToggleTarget,
+    /// What is installed for each platform.
+    SdkLoaded(SdkInfo),
+    /// A fresh device listing, and why a platform could not be listed.
+    DevicesLoaded {
+        devices: Arc<Vec<Device>>,
+        errors: BTreeMap<Platform, String>,
+    },
+    /// List the devices again now.
+    RefreshDevices,
+    /// Move the device highlight within the current target (negative = up).
+    DeviceMove(i16),
+    /// Start the chosen device.
+    BootDevice,
+    /// Stop the chosen device.
+    StopDevice,
+    /// Starting or stopping `id` on `platform` failed.
+    DeviceActionFailed {
+        platform: Platform,
+        id: String,
+        message: String,
+    },
+    /// Choices remembered from an earlier run.
+    PrefsLoaded(ProjectPrefs),
+    /// Show or hide the environment (SDK) overlay.
+    ToggleInfo,
 }

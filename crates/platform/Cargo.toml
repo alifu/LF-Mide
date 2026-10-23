@@ -1,0 +1,17 @@
+[package]
+name = "lf-mide-platform"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide Android and iOS tooling: SDK facts, emulators and simulators"
+
+[dependencies]
+lf-mide-core.workspace = true
+lf-mide-system.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

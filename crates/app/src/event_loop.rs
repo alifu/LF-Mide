@@ -3,7 +3,7 @@
 use color_eyre::Result;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use lf_mide_core::{Action, AppState, DoctorPanel, Project, TerminalKind, reduce};
+use lf_mide_core::{Action, AppState, DoctorPanel, Project, ProjectPrefs, TerminalKind, reduce};
 use lf_mide_doctor::system::SystemRunner;
 use lf_mide_terminal::{LaunchError, Launched, copy_to_clipboard, open_split};
 use ratatui::DefaultTerminal;
@@ -26,7 +26,15 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     let detected = lf_mide_terminal::detect(&SystemRunner::new());
     let mut state = reduce(initial, Action::ViewportChanged(rows));
     state = reduce(state, Action::TerminalDetected(detected));
+    // Choices remembered from the last run in this project.
+    let prefs_path = paths::project_prefs(&state.project.root, &state.project.name);
+    if let Some(path) = &prefs_path {
+        state = reduce(state, Action::PrefsLoaded(settings::load_prefs(path)));
+    }
+    let mut saved_prefs = state.prefs();
     effects::spawn_scan(state.project.root.clone(), tx.clone());
+    effects::spawn_sdk_info(tx.clone());
+    let device_watch = effects::spawn_device_watch(tx.clone());
     let mut grep_scheduler = effects::GrepScheduler::default();
     let result = loop {
         if state.should_quit {
@@ -54,6 +62,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
 
         let was_running = state.doctor == DoctorPanel::Running;
         let scan_was_running = state.files_loading;
+        let refresh_devices = actions.iter().any(|a| matches!(a, Action::RefreshDevices));
         let grep_finished = actions
             .iter()
             .any(|a| matches!(a, Action::GrepResults { .. }));
@@ -74,6 +83,20 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         }
         if state.config.terminal != terminal_before {
             save_terminal_choice(state.config.terminal, &tx);
+        }
+
+        // Start or stop the devices the user asked for.
+        let (next, commands) = effects::take_commands(state);
+        state = next;
+        for command in commands {
+            effects::spawn_device_command(command, tx.clone());
+        }
+        if refresh_devices {
+            effects::spawn_device_listing(tx.clone());
+        }
+        if let Some(prefs) = effects::prefs_to_save(&saved_prefs, &state) {
+            save_prefs_quietly(prefs_path.as_deref(), &prefs, &tx);
+            saved_prefs = prefs;
         }
 
         if effects::should_start_scan(refresh_files, scan_was_running) {
@@ -111,6 +134,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         }
     };
     watcher.abort();
+    device_watch.abort();
     result
 }
 
@@ -170,6 +194,22 @@ fn spawn_editor(state: &AppState, tx: UnboundedSender<Action>) {
         };
         let _ = tx.send(editor_result_action(prepared.socket, result, copied));
     });
+}
+
+/// Remembers the build target and chosen devices. A failure is shown but
+/// never fatal: these are conveniences.
+fn save_prefs_quietly(
+    path: Option<&std::path::Path>,
+    prefs: &ProjectPrefs,
+    tx: &UnboundedSender<Action>,
+) {
+    let Some(path) = path else { return };
+    if let Err(error) = settings::save_prefs(path, prefs) {
+        tracing::warn!(%error, "could not save project preferences");
+        let _ = tx.send(Action::Status(format!(
+            "Could not remember your choices: {error}"
+        )));
+    }
 }
 
 /// Remembers the picked terminal in the global config file.

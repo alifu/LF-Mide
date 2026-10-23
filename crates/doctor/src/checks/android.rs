@@ -9,7 +9,6 @@ use crate::props;
 use crate::version::Version;
 
 const MIN_JDK: Version = Version::new(17, 0, 0);
-const DEFAULT_SDK_RELATIVE: &str = "Library/Android/sdk";
 const STUDIO_APP: &str = "Android Studio.app";
 const SDK_HINT: &str = "brew install --cask android-commandlinetools, then export ANDROID_HOME=$HOME/Library/Android/sdk";
 
@@ -27,31 +26,12 @@ pub const CHECKS: &[CheckFn] = &[
     gradle_wrapper,
 ];
 
-pub struct Sdk {
-    pub root: PathBuf,
-    /// Where we found it, for the report (e.g. `ANDROID_HOME`).
-    pub source: &'static str,
-}
+pub use lf_mide_platform::android::Sdk;
 
-/// First existing SDK directory from `ANDROID_HOME`, `ANDROID_SDK_ROOT`,
-/// then `~/Library/Android/sdk`.
+/// The SDK we may run tools from. Shared with the rest of LF-Mide: see
+/// [`lf_mide_platform::android::find_sdk`] for the order and the trust rules.
 pub fn find_sdk(ctx: &Ctx) -> Option<Sdk> {
-    let from_env = |key: &'static str| ctx.sys.env(key).map(|value| (PathBuf::from(value), key));
-    let default_location = || {
-        let home = ctx.sys.home()?;
-        Some((home.join(DEFAULT_SDK_RELATIVE), "default location"))
-    };
-    // `local.properties` is deliberately not a source: it comes from the
-    // repository and we execute tools found under the SDK. See `suggested_sdk`.
-    [
-        from_env("ANDROID_HOME"),
-        from_env("ANDROID_SDK_ROOT"),
-        default_location(),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|(path, _)| ctx.sys.is_dir(path))
-    .map(|(root, source)| Sdk { root, source })
+    lf_mide_platform::android::find_sdk(ctx.sys)
 }
 
 /// The `sdk.dir` in the project's `local.properties`, offered to the user as
