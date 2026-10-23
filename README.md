@@ -68,9 +68,34 @@ cargo build --release
 ./target/release/lf-mide /path/to/your/cmp-project   # or run it inside the project
 ```
 
-Keys so far: `Tab` / `Shift-Tab` move focus, `e` opens Neovim in a split pane, `T` picks the terminal, `D` opens the
-doctor panel, `q` or `Ctrl-C` quits.
+Keys so far:
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift-Tab` | move focus between panels |
+| `e` | open Neovim in a split pane (do this first) |
+| `f` | fuzzy-find a file and open it (`Ctrl-n`/`Ctrl-p` or arrows move, `Enter` opens, `Esc` cancels) |
+| `/` | search the project with ripgrep (`Enter` searches, then `Enter` opens the highlighted hit at its line) |
+| `T` | pick the terminal |
+| `D` | doctor panel |
+| `R` | rescan the project files |
+| `q` / `Ctrl-C` | quit (inside `f` and `/` every key is text, so `q` is just a letter) |
+
+In the file tree (focused by default): `j`/`k` or arrows move, `l`/`Right` expands, `h`/`Left` collapses or steps out,
+`Enter` opens a file or toggles a directory, `g`/`G` jump to top/bottom, `PageUp`/`PageDown` page.
 In the doctor panel: `j`/`k` or arrows scroll, `PageUp`/`PageDown` page, `r` re-runs the checks, `Esc` or `D` closes.
+
+## Navigating the project
+
+The file tree and the finder list every regular file under the project root, honoring `.gitignore` (even without a
+`.git` folder) and skipping `.git`, `.gradle`, `.kotlin`, `.idea`, `build`, `DerivedData`, `node_modules` and `Pods`.
+Symbolic links are never followed or listed. Up to 200,000 files are listed. The finder re-ranks as you type (about
+5 ms for 10,000 files, 25 ms at the 200,000 cap); opening or closing a folder in a 200,000-file project takes about
+130 ms. Search needs [ripgrep](https://github.com/BurntSushi/ripgrep) and
+ignores your own ripgrep config, so results are the same for everyone.
+
+Choosing a file sends it to the Neovim that `e` opened, over its RPC socket. The file name is passed as raw bytes and
+used only as data (never as part of a Neovim command), so names like `100%.txt` or `a b#c.kt` open correctly.
 
 ## Terminal and the editor split
 
@@ -140,6 +165,8 @@ crates/
 ├── app/              # lf-mide binary: CLI, event loop, keymap, background tasks
 ├── core/             # state, actions, pure reducer, config, project detection, doctor result types
 ├── doctor/           # dependency checks behind `lf-mide doctor`
+├── editor/           # shows a file in the running Neovim over its RPC socket
+├── nav/              # project scan, fuzzy finder, ripgrep search
 ├── system/           # running commands / reading the machine behind a trait (shared, testable)
 ├── terminal/         # terminal detection and split-pane launching
 ├── ui/               # ratatui rendering (pure view of the state)

@@ -4,6 +4,8 @@
 pub mod action;
 pub mod config;
 pub mod doctor;
+pub mod layout;
+pub mod nav;
 pub mod project;
 pub mod reducer;
 pub mod state;
@@ -13,6 +15,9 @@ pub use config::{Config, ConfigError, TerminalKind, set_terminal_in_config};
 pub use doctor::{
     Category, CheckResult, LineKind, Report, ReportLine, Status, popup_content_rows, popup_height,
 };
+pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
 pub use project::{Project, ProjectError, ProjectLayout};
 pub use reducer::reduce;
-pub use state::{AppState, BranchInfo, DoctorPanel, Panel};
+pub use state::{
+    AppState, BranchInfo, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS, Panel,
+};

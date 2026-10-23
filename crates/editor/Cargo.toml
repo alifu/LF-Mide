@@ -1,0 +1,16 @@
+[package]
+name = "lf-mide-editor"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide control of a running Neovim over its RPC socket"
+
+[dependencies]
+nvim-rs.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

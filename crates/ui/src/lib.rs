@@ -1,6 +1,12 @@
 //! Rendering for LF-Mide. Every function here is a pure view of
 //! [`AppState`]; nothing in this crate changes state.
 
+mod search;
+#[cfg(test)]
+mod testing;
+mod tree;
+
+use lf_mide_core::layout::{BOTTOM_ROWS, HEADER_ROWS, MIN_BODY_ROWS, STATUS_ROWS};
 use lf_mide_core::{
     AppState, BranchInfo, DoctorPanel, LineKind, Panel, ReportLine, Status, TerminalKind,
     popup_height,
@@ -13,9 +19,9 @@ use ratatui::widgets::{Block, Clear, Paragraph, Tabs};
 
 const FILES_WIDTH_PCT: u16 = 20;
 const DEVICES_WIDTH_PCT: u16 = 22;
-const BOTTOM_HEIGHT: u16 = 8;
 const BOTTOM_TABS: [&str; 5] = ["Build", "Logcat", "iOS Log", "Problems", "Git"];
-const HELP_HINT: &str = "Tab/S-Tab: focus · e: editor · T: terminal · D: doctor · q: quit";
+const HELP_HINT: &str =
+    "Tab: focus · e: editor · f: find · /: search · T: terminal · D: doctor · q: quit";
 const PICKER_TITLE: &str = " Terminal · Enter select · Esc cancel ";
 const PICKER_WIDTH: u16 = 56;
 const DOCTOR_TITLE: &str = " Doctor · Esc close · r re-run · j/k scroll ";
@@ -27,10 +33,10 @@ const BAR_BG: Color = Color::Rgb(40, 44, 52);
 
 pub fn render(frame: &mut Frame, state: &AppState) {
     let [header, body, bottom, status] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(3),
-        Constraint::Length(BOTTOM_HEIGHT),
-        Constraint::Length(1),
+        Constraint::Length(HEADER_ROWS),
+        Constraint::Min(MIN_BODY_ROWS),
+        Constraint::Length(BOTTOM_ROWS),
+        Constraint::Length(STATUS_ROWS),
     ])
     .areas(frame.area());
     let [files, editor, devices] = Layout::horizontal([
@@ -41,7 +47,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     .areas(body);
 
     render_header(frame, header, state);
-    render_placeholder(frame, files, state, Panel::Files, "File tree (Phase 2)");
+    tree::render_tree(frame, files, state);
     render_placeholder(
         frame,
         editor,
@@ -60,6 +66,8 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_status(frame, status, state);
     render_doctor(frame, state);
     render_terminal_picker(frame, state);
+    search::render_finder(frame, state);
+    search::render_grep(frame, state);
 }
 
 /// Who will host Neovim: the configured terminal, or what `Auto` found.
@@ -199,6 +207,16 @@ fn status_color(status: Status) -> Color {
     }
 }
 
+/// The branch segment of the status bar; a placeholder until the first git
+/// check has reported, so "no git repo" is never shown merely for not knowing.
+fn branch_text(state: &AppState) -> String {
+    if state.branch_known {
+        branch_label(state.branch.as_ref())
+    } else {
+        "⎇ …".to_string()
+    }
+}
+
 /// Text for the branch segment, e.g. `⎇ main*` or `⎇ a1b2c3d (detached)`.
 pub fn branch_label(branch: Option<&BranchInfo>) -> String {
     match branch {
@@ -266,7 +284,7 @@ fn render_bottom(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut spans = vec![Span::styled(
-        format!(" {} ", branch_label(state.branch.as_ref())),
+        format!(" {} ", branch_text(state)),
         Style::new().fg(ACCENT),
     )];
     if let Some(message) = &state.status {
@@ -361,6 +379,18 @@ mod tests {
     }
 
     #[test]
+    fn the_branch_shows_a_placeholder_until_it_is_known() {
+        let unknown = draw(&state());
+        let not_a_repo = draw(&reduce(state(), Action::BranchChanged(None)));
+
+        assert!(
+            unknown.contains("⎇ …") && !unknown.contains("no git repo"),
+            "{unknown}"
+        );
+        assert!(not_a_repo.contains("no git repo"), "{not_a_repo}");
+    }
+
+    #[test]
     fn renders_branch_and_status_message() {
         let branch = BranchInfo {
             name: "feature/login".into(),
@@ -378,23 +408,6 @@ mod tests {
         assert!(screen.contains("git failed"));
     }
 
-    #[test]
-    fn marks_focused_panel_title() {
-        let files_focused = reduce(state(), Action::FocusPrev);
-        assert_eq!(files_focused.focus, Panel::Files);
-
-        let default_screen = draw(&state());
-        let files_screen = draw(&files_focused);
-
-        assert!(
-            default_screen.contains("▶ Editor"),
-            "default focus is the editor:\n{default_screen}"
-        );
-        assert!(!default_screen.contains("▶ Files"));
-        assert!(files_screen.contains("▶ Files"));
-        assert!(!files_screen.contains("▶ Editor"));
-    }
-
     fn report(count: usize) -> lf_mide_core::Report {
         use lf_mide_core::{Category, CheckResult};
         let results = (0..count)
@@ -409,6 +422,23 @@ mod tests {
             doctor_scroll: scroll,
             ..state()
         }
+    }
+
+    #[test]
+    fn marks_focused_panel_title() {
+        let editor_focused = reduce(state(), Action::FocusNext);
+        assert_eq!(editor_focused.focus, Panel::Editor);
+
+        let default_screen = draw(&state());
+        let editor_screen = draw(&editor_focused);
+
+        assert!(
+            default_screen.contains("▶ Files"),
+            "the tree starts focused:\n{default_screen}"
+        );
+        assert!(!default_screen.contains("▶ Editor"));
+        assert!(editor_screen.contains("▶ Editor"));
+        assert!(!editor_screen.contains("▶ Files"));
     }
 
     #[test]

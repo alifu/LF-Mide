@@ -8,10 +8,11 @@ use lf_mide_doctor::system::SystemRunner;
 use lf_mide_terminal::{LaunchError, Launched, copy_to_clipboard, open_split};
 use ratatui::DefaultTerminal;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::{branch_watch, editor, keymap, paths, settings};
+use crate::{branch_watch, editor, effects, keymap, paths, settings};
 
 /// The first AppleScript call may wait for the user to allow access.
 const EDITOR_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -25,6 +26,8 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     let detected = lf_mide_terminal::detect(&SystemRunner::new());
     let mut state = reduce(initial, Action::ViewportChanged(rows));
     state = reduce(state, Action::TerminalDetected(detected));
+    effects::spawn_scan(state.project.root.clone(), tx.clone());
+    let mut grep_scheduler = effects::GrepScheduler::default();
     let result = loop {
         if state.should_quit {
             break Ok(());
@@ -50,8 +53,17 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         };
 
         let was_running = state.doctor == DoctorPanel::Running;
+        let scan_was_running = state.files_loading;
+        let grep_finished = actions
+            .iter()
+            .any(|a| matches!(a, Action::GrepResults { .. }));
         let open_editor = actions.iter().any(|a| matches!(a, Action::OpenEditor));
         let terminal_before = state.config.terminal;
+        let refresh_files = actions.iter().any(|a| matches!(a, Action::RefreshFiles));
+        let opens = file_opens(&actions);
+        let finder_before = state.finder.as_ref().map(|f| f.query.clone());
+        let grep_before = state.grep.as_ref().and_then(|g| g.searched.clone());
+        let files_before = Arc::clone(&state.files);
         state = actions.into_iter().fold(state, reduce);
 
         if doctor_run_started(was_running, &state) {
@@ -63,9 +75,54 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         if state.config.terminal != terminal_before {
             save_terminal_choice(state.config.terminal, &tx);
         }
+
+        if effects::should_start_scan(refresh_files, scan_was_running) {
+            effects::spawn_scan(state.project.root.clone(), tx.clone());
+        }
+        // Rank when the finder opens, its query changes, or the files do.
+        let ranked_before = if Arc::ptr_eq(&files_before, &state.files) {
+            finder_before.as_deref()
+        } else {
+            None
+        };
+        if let Some(query) = effects::finder_query_to_rank(ranked_before, &state) {
+            let matches = lf_mide_nav::fuzzy::rank(&state.files, &query, effects::FINDER_LIMIT);
+            state = reduce(state, Action::FinderResults { query, matches });
+        }
+        // One ripgrep at a time: a new search waits for the running one and
+        // only the latest query is kept.
+        let mut to_run = Vec::new();
+        if grep_finished {
+            to_run.extend(grep_scheduler.finished());
+        }
+        if let Some(query) = effects::grep_query_to_run(grep_before.as_deref(), &state) {
+            to_run.extend(grep_scheduler.request(query));
+        }
+        for query in to_run {
+            effects::spawn_grep(state.project.root.clone(), query, tx.clone());
+        }
+        // Without a running editor the reducer has already said so.
+        if let Some(socket) = &state.editor_socket {
+            for (path, line) in opens {
+                let root = state.project.root.clone();
+                let patience = effects::open_patience(state.editor_ready);
+                effects::spawn_open(root, socket.clone(), path, line, patience, tx.clone());
+            }
+        }
     };
     watcher.abort();
     result
+}
+
+/// The files the user asked to open in this batch of actions.
+fn file_opens(actions: &[Action]) -> Vec<(PathBuf, Option<u32>)> {
+    actions
+        .iter()
+        .filter_map(|action| match action {
+            Action::OpenFile { path, line } => Some((path.clone(), *line)),
+            _ => None,
+        })
+        .collect()
 }
 
 enum Input {
@@ -209,6 +266,31 @@ mod tests {
             note: "Ghostty can't be controlled by other programs.".into(),
             command: "cd '/p' && exec 'nvim'".into(),
         }
+    }
+
+    #[test]
+    fn file_opens_collects_only_open_requests_in_order() {
+        let actions = vec![
+            Action::FocusNext,
+            Action::OpenFile {
+                path: PathBuf::from("a.kt"),
+                line: Some(3),
+            },
+            Action::Quit,
+            Action::OpenFile {
+                path: PathBuf::from("b.kt"),
+                line: None,
+            },
+        ];
+
+        assert_eq!(
+            file_opens(&actions),
+            vec![
+                (PathBuf::from("a.kt"), Some(3)),
+                (PathBuf::from("b.kt"), None)
+            ]
+        );
+        assert!(file_opens(&[]).is_empty());
     }
 
     #[test]

@@ -4,6 +4,7 @@ mod branch_watch;
 mod cli;
 mod doctor_cmd;
 mod editor;
+mod effects;
 mod event_loop;
 mod keymap;
 mod paths;

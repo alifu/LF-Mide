@@ -69,6 +69,17 @@ impl FakeSystem {
         self
     }
 
+    /// A command that exits non-zero but still printed `stdout` and `stderr`.
+    pub fn fails_with_output(mut self, cmd: &str, stdout: &str, stderr: &str) -> Self {
+        let output = Output {
+            success: false,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        };
+        self.commands.insert(cmd.into(), Ok(output));
+        self
+    }
+
     pub fn run_error(mut self, cmd: &str, error: RunError) -> Self {
         self.commands.insert(cmd.into(), Err(error));
         self

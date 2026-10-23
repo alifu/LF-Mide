@@ -1,0 +1,20 @@
+[package]
+name = "lf-mide-nav"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide project navigation: file scan, fuzzy finder, ripgrep search"
+
+[dependencies]
+ignore.workspace = true
+lf-mide-core.workspace = true
+lf-mide-system.workspace = true
+nucleo-matcher.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
