@@ -16,7 +16,10 @@ The goal is to work on a CMP app without keeping Android Studio and Xcode open, 
 - Live build status and logs (Gradle, `xcodebuild`, `logcat`, simulator log stream)
 - Git integration: active branch, changed lines (new vs old code), blame you can turn on and off
 - Keyboard navigation: file tree, fuzzy file finder, project search
-- `doctor` / `clean` commands to cap JVM memory and free disk space (DerivedData, unused simulators, Gradle caches)
+- `doctor` command: checks every dependency (Android Studio, Android SDK, `adb`, emulator, JDK, Xcode, simulator runtimes, Neovim, language servers, terminal) and suggests fixes
+- Performance status: RAM, swap, memory pressure, and per-process usage of Gradle, Kotlin daemon, language servers, emulator and simulator
+- Selectable terminal (iTerm2, Ghostty, WezTerm, Kitty, Terminal.app, tmux)
+- `clean` command to cap JVM memory and free disk space (DerivedData, unused simulators, Gradle caches)
 
 Scope for now: **emulators and simulators only** (no physical devices).
 
@@ -25,9 +28,9 @@ Scope for now: **emulators and simulators only** (no physical devices).
 | Milestone | Contents |
 |---|---|
 | M0 | Spike: build & run the CMP app with no IDE, check autocomplete |
-| M1 | Cockpit MVP: navigation, SDK info, target/device pickers, build, run, logs |
+| M1 | Cockpit MVP: doctor, terminal selection, navigation, SDK info, target/device pickers, build, run, logs, performance status |
 | M2 | Git: gutter, diff view, blame toggle |
-| M3 | Memory & disk tuning (`doctor`, `clean`) |
+| M3 | Memory & disk tuning (`clean`, JVM heap defaults) |
 | M4 | Single-window IDE with embedded Neovim |
 
 Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
@@ -37,7 +40,7 @@ Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
 | Tool | Purpose |
 |---|---|
 | Rust (stable, edition 2024) | Build LF-Mide |
-| [Ghostty](https://ghostty.org) | Recommended terminal (native macOS, built-in splits, good keyboard support) |
+| A terminal: [iTerm2](https://iterm2.com) (primary), Ghostty, WezTerm, Kitty, Terminal.app, or tmux | Hosts LF-Mide and the Neovim split. Selectable in config |
 | Neovim ≥ 0.11 | Editor |
 | JDK 17 or 21 | Gradle, Kotlin language server |
 | Android command-line tools (`platform-tools`, `emulator`, a system image) | Android builds, no Android Studio needed |
@@ -48,11 +51,14 @@ Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
 
 ## Expected CMP project layout
 
+Both CMP templates are supported:
+
 ```
-<project>/
-├── composeApp/        # shared Kotlin + Android app
-├── iosApp/            # Xcode project
-└── settings.gradle.kts
+<project>/                         <project>/
+├── composeApp/  # shared + Android  ├── androidApp/  # Android app
+├── iosApp/      # Xcode project     ├── shared/      # shared Kotlin
+└── settings.gradle.kts              ├── iosApp/      # Xcode project
+                                     └── settings.gradle.kts
 ```
 
 ## Build & run
@@ -74,7 +80,15 @@ Workspace layout:
 
 ```
 crates/
-└── app/    # lf-mide binary
+└── app/              # lf-mide binary
+spikes/
+└── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
+docs/
+└── spike-results.md  # Phase 0 results and measurements
 ```
 
 More crates (`core`, `platform`, `vcs`, `editor`, `ui`) are added as the roadmap progresses.
+
+## Phase 0 results
+
+Building and running on an Android emulator and an iOS simulator works with no Android Studio or Xcode window open. Swift/SwiftUI completion works, and Neovim can be embedded in a ratatui UI. The IDE side uses under 100 MB of RAM. Details in [docs/spike-results.md](docs/spike-results.md).
