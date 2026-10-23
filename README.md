@@ -68,7 +68,28 @@ cargo build --release
 ./target/release/lf-mide /path/to/your/cmp-project   # or run it inside the project
 ```
 
-Keys so far: `Tab` / `Shift-Tab` move focus, `q` or `Ctrl-C` quits.
+Keys so far: `Tab` / `Shift-Tab` move focus, `D` opens the doctor panel, `q` or `Ctrl-C` quits.
+In the doctor panel: `j`/`k` or arrows scroll, `PageUp`/`PageDown` page, `r` re-runs the checks, `Esc` or `D` closes.
+
+## Doctor
+
+`lf-mide doctor` checks everything LF-Mide and your CMP project need and prints a fix for each problem:
+
+```bash
+lf-mide doctor                      # check from the current directory
+lf-mide doctor /path/to/project     # check a specific project
+lf-mide doctor --json               # machine-readable
+```
+
+It covers the Android SDK (`adb`, emulator, `sdkmanager`, build-tools, platforms, system images, AVDs), JDK,
+Gradle wrapper, Xcode (selected developer dir, license, first launch), iOS simulator runtimes, Neovim and language
+servers, the terminal, `gradle.properties` heap sizes against your RAM, the `buildServer.json` used for Swift
+completion, and free disk space. Android Studio is reported as optional. The command exits with `1` if something
+required is missing (warnings do not fail it) and never installs or changes anything.
+
+Tools are located through your `PATH`, `ANDROID_HOME` / `ANDROID_SDK_ROOT`, `JAVA_HOME` and the default
+`~/Library/Android/sdk`. A project's `local.properties` is repo-controlled, so the doctor never runs tools from
+its `sdk.dir`; if no SDK is found it only suggests that directory so you can export `ANDROID_HOME` yourself.
 
 ## Configuration
 
@@ -97,17 +118,13 @@ Workspace layout:
 ```
 crates/
 ├── app/              # lf-mide binary: CLI, event loop, keymap, background tasks
-├── core/             # state, actions, pure reducer, config, project detection
+├── core/             # state, actions, pure reducer, config, project detection, doctor result types
+├── doctor/           # dependency checks behind `lf-mide doctor`
 ├── ui/               # ratatui rendering (pure view of the state)
 └── vcs/              # git: branch, dirty state
 spikes/
 └── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
-docs/
-└── spike-results.md  # Phase 0 results and measurements
 ```
 
 More crates (`platform`, `editor`) are added as the roadmap progresses.
 
-## Phase 0 results
-
-Building and running on an Android emulator and an iOS simulator works with no Android Studio or Xcode window open. Swift/SwiftUI completion works, and Neovim can be embedded in a ratatui UI. The IDE side uses under 100 MB of RAM. Details in [docs/spike-results.md](docs/spike-results.md).

@@ -3,12 +3,16 @@
 
 pub mod action;
 pub mod config;
+pub mod doctor;
 pub mod project;
 pub mod reducer;
 pub mod state;
 
 pub use action::Action;
 pub use config::{Config, ConfigError, TerminalKind};
+pub use doctor::{
+    Category, CheckResult, LineKind, Report, ReportLine, Status, popup_content_rows, popup_height,
+};
 pub use project::{Project, ProjectError, ProjectLayout};
 pub use reducer::reduce;
-pub use state::{AppState, BranchInfo, Panel};
+pub use state::{AppState, BranchInfo, DoctorPanel, Panel};

@@ -1,6 +1,7 @@
 //! Application state. Treated as immutable: the reducer returns new values.
 
 use crate::config::Config;
+use crate::doctor::Report;
 use crate::project::Project;
 
 /// Focusable areas of the main layout, in Tab order.
@@ -40,6 +41,18 @@ pub struct BranchInfo {
     pub dirty: bool,
 }
 
+/// The doctor overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DoctorPanel {
+    Closed,
+    /// Checks are running in the background.
+    Running,
+    Ready(Report),
+}
+
+/// Assumed until the first resize event arrives.
+pub const DEFAULT_TERMINAL_HEIGHT: u16 = 24;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
     pub project: Project,
@@ -48,6 +61,10 @@ pub struct AppState {
     pub focus: Panel,
     pub status: Option<String>,
     pub should_quit: bool,
+    pub doctor: DoctorPanel,
+    /// First visible line of the doctor report.
+    pub doctor_scroll: u16,
+    pub terminal_height: u16,
 }
 
 impl AppState {
@@ -59,6 +76,9 @@ impl AppState {
             focus: Panel::Editor,
             status: None,
             should_quit: false,
+            doctor: DoctorPanel::Closed,
+            doctor_scroll: 0,
+            terminal_height: DEFAULT_TERMINAL_HEIGHT,
         }
     }
 }

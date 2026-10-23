@@ -15,6 +15,7 @@ crossterm.workspace = true
 directories.workspace = true
 futures.workspace = true
 lf-mide-core.workspace = true
+lf-mide-doctor.workspace = true
 lf-mide-ui.workspace = true
 lf-mide-vcs.workspace = true
 ratatui.workspace = true
@@ -25,3 +26,6 @@ tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

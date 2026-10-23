@@ -16,6 +16,15 @@ pub enum ProjectLayout {
     AndroidAppShared,
 }
 
+impl ProjectLayout {
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectLayout::ComposeApp => "composeApp",
+            ProjectLayout::AndroidAppShared => "androidApp + shared",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub root: PathBuf,
@@ -106,6 +115,15 @@ mod tests {
         }
         fs::write(tmp.path().join("settings.gradle.kts"), settings).unwrap();
         tmp
+    }
+
+    #[test]
+    fn layout_labels_name_the_source_folders() {
+        assert_eq!(ProjectLayout::ComposeApp.label(), "composeApp");
+        assert_eq!(
+            ProjectLayout::AndroidAppShared.label(),
+            "androidApp + shared"
+        );
     }
 
     #[test]
