@@ -1,5 +1,8 @@
 //! Everything that can change [`AppState`](crate::AppState).
 
+use std::path::PathBuf;
+
+use crate::config::TerminalKind;
 use crate::doctor::Report;
 use crate::state::BranchInfo;
 
@@ -21,4 +24,15 @@ pub enum Action {
     DoctorScroll(i16),
     /// The terminal is now this many rows tall.
     ViewportChanged(u16),
+    /// `TerminalKind::Auto` resolves to this terminal (or none).
+    TerminalDetected(Option<TerminalKind>),
+    OpenTerminalPicker,
+    /// Move the picker highlight by this many rows (wraps around).
+    TerminalPickerMove(i16),
+    TerminalPickerSelect,
+    TerminalPickerCancel,
+    /// The user asked for Neovim in a split pane (the app performs it).
+    OpenEditor,
+    /// Neovim is running and listening on this socket.
+    EditorOpened(PathBuf),
 }

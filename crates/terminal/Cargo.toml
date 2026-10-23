@@ -1,0 +1,17 @@
+[package]
+name = "lf-mide-terminal"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide terminal detection and split-pane launching (iTerm2, tmux, WezTerm, ...)"
+
+[dependencies]
+lf-mide-core.workspace = true
+lf-mide-system.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+lf-mide-system = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

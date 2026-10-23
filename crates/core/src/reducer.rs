@@ -1,6 +1,7 @@
 //! Pure state transitions.
 
 use crate::action::Action;
+use crate::config::{Config, TerminalKind};
 use crate::doctor::{Report, popup_content_rows};
 use crate::state::{AppState, DoctorPanel};
 
@@ -71,6 +72,53 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 ..state
             }
         }
+        Action::TerminalDetected(detected_terminal) => AppState {
+            detected_terminal,
+            ..state
+        },
+        Action::OpenTerminalPicker => AppState {
+            terminal_picker: Some(picker_index(&state.config)),
+            ..state
+        },
+        Action::TerminalPickerMove(delta) => {
+            let Some(current) = state.terminal_picker else {
+                return state;
+            };
+            let rows = TerminalKind::ALL.len() as i32;
+            let moved = (current as i32 + i32::from(delta)).rem_euclid(rows);
+            AppState {
+                terminal_picker: Some(moved as usize),
+                ..state
+            }
+        }
+        Action::TerminalPickerSelect => {
+            let Some(row) = state.terminal_picker else {
+                return state;
+            };
+            let kind = TerminalKind::ALL[row.min(TerminalKind::ALL.len() - 1)];
+            AppState {
+                config: Config {
+                    terminal: kind,
+                    ..state.config
+                },
+                terminal_picker: None,
+                status: Some(format!("Terminal: {}", kind.label())),
+                ..state
+            }
+        }
+        Action::TerminalPickerCancel => AppState {
+            terminal_picker: None,
+            ..state
+        },
+        Action::OpenEditor => AppState {
+            status: Some("Opening Neovim…".to_string()),
+            ..state
+        },
+        Action::EditorOpened(socket) => AppState {
+            editor_socket: Some(socket),
+            status: Some("Neovim opened in a split pane".to_string()),
+            ..state
+        },
         Action::ViewportChanged(terminal_height) => {
             let resized = AppState {
                 terminal_height,
@@ -86,6 +134,13 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             }
         }
     }
+}
+
+fn picker_index(config: &Config) -> usize {
+    TerminalKind::ALL
+        .iter()
+        .position(|kind| *kind == config.terminal)
+        .unwrap_or(0)
 }
 
 /// Furthest the report can scroll while still filling the overlay.
@@ -253,5 +308,107 @@ mod tests {
 
         assert!(taller.doctor_scroll < scrolled.doctor_scroll);
         assert_eq!(taller.terminal_height, 60);
+    }
+
+    // --- terminal picker and editor launch ---
+
+    #[test]
+    fn opening_the_picker_highlights_the_current_terminal() {
+        let mut s = state();
+        s.config.terminal = TerminalKind::Wezterm;
+
+        let opened = reduce(s, Action::OpenTerminalPicker);
+
+        let index = TerminalKind::ALL
+            .iter()
+            .position(|k| *k == TerminalKind::Wezterm);
+        assert_eq!(opened.terminal_picker, index);
+        assert_eq!(
+            reduce(state(), Action::OpenTerminalPicker).terminal_picker,
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn picker_moves_and_wraps_around() {
+        let last = TerminalKind::ALL.len() - 1;
+        let open = reduce(state(), Action::OpenTerminalPicker);
+
+        let down = reduce(open.clone(), Action::TerminalPickerMove(1));
+        let wrapped_up = reduce(open.clone(), Action::TerminalPickerMove(-1));
+        let wrapped_down = reduce(wrapped_up.clone(), Action::TerminalPickerMove(1));
+
+        assert_eq!(down.terminal_picker, Some(1));
+        assert_eq!(wrapped_up.terminal_picker, Some(last));
+        assert_eq!(wrapped_down.terminal_picker, Some(0));
+    }
+
+    #[test]
+    fn picker_moves_are_ignored_while_closed() {
+        assert_eq!(
+            reduce(state(), Action::TerminalPickerMove(1)).terminal_picker,
+            None
+        );
+    }
+
+    #[test]
+    fn selecting_applies_the_highlighted_terminal_and_closes_the_picker() {
+        let open = reduce(state(), Action::OpenTerminalPicker);
+        let on_iterm = reduce(open, Action::TerminalPickerMove(1));
+
+        let chosen = reduce(on_iterm, Action::TerminalPickerSelect);
+
+        assert_eq!(chosen.config.terminal, TerminalKind::ALL[1]);
+        assert_eq!(chosen.terminal_picker, None);
+        assert!(
+            chosen
+                .status
+                .unwrap()
+                .contains(TerminalKind::ALL[1].label())
+        );
+    }
+
+    #[test]
+    fn cancelling_leaves_the_setting_alone() {
+        let open = reduce(state(), Action::OpenTerminalPicker);
+        let moved = reduce(open, Action::TerminalPickerMove(2));
+
+        let cancelled = reduce(moved, Action::TerminalPickerCancel);
+
+        assert_eq!(cancelled.config.terminal, Config::default().terminal);
+        assert_eq!(cancelled.terminal_picker, None);
+    }
+
+    #[test]
+    fn select_without_an_open_picker_does_nothing() {
+        let after = reduce(state(), Action::TerminalPickerSelect);
+
+        assert_eq!(after, state());
+    }
+
+    #[test]
+    fn detected_terminal_is_recorded() {
+        let after = reduce(
+            state(),
+            Action::TerminalDetected(Some(TerminalKind::Iterm2)),
+        );
+
+        assert_eq!(after.detected_terminal, Some(TerminalKind::Iterm2));
+    }
+
+    #[test]
+    fn open_editor_shows_progress_and_the_result_records_the_socket() {
+        let asked = reduce(state(), Action::OpenEditor);
+        let opened = reduce(
+            asked.clone(),
+            Action::EditorOpened(PathBuf::from("/tmp/lf/nvim.sock")),
+        );
+
+        assert!(asked.status.unwrap().contains("Opening Neovim"));
+        assert_eq!(
+            opened.editor_socket,
+            Some(PathBuf::from("/tmp/lf/nvim.sock"))
+        );
+        assert!(opened.status.unwrap().contains("Neovim"));
     }
 }

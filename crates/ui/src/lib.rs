@@ -2,7 +2,8 @@
 //! [`AppState`]; nothing in this crate changes state.
 
 use lf_mide_core::{
-    AppState, BranchInfo, DoctorPanel, LineKind, Panel, ReportLine, Status, popup_height,
+    AppState, BranchInfo, DoctorPanel, LineKind, Panel, ReportLine, Status, TerminalKind,
+    popup_height,
 };
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -14,7 +15,9 @@ const FILES_WIDTH_PCT: u16 = 20;
 const DEVICES_WIDTH_PCT: u16 = 22;
 const BOTTOM_HEIGHT: u16 = 8;
 const BOTTOM_TABS: [&str; 5] = ["Build", "Logcat", "iOS Log", "Problems", "Git"];
-const HELP_HINT: &str = "Tab/S-Tab: focus · D: doctor · q: quit";
+const HELP_HINT: &str = "Tab/S-Tab: focus · e: editor · T: terminal · D: doctor · q: quit";
+const PICKER_TITLE: &str = " Terminal · Enter select · Esc cancel ";
+const PICKER_WIDTH: u16 = 56;
 const DOCTOR_TITLE: &str = " Doctor · Esc close · r re-run · j/k scroll ";
 const DOCTOR_MAX_WIDTH: u16 = 110;
 
@@ -56,6 +59,75 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_bottom(frame, bottom, state);
     render_status(frame, status, state);
     render_doctor(frame, state);
+    render_terminal_picker(frame, state);
+}
+
+/// Who will host Neovim: the configured terminal, or what `Auto` found.
+pub fn terminal_summary(state: &AppState) -> String {
+    match state.config.terminal {
+        TerminalKind::Auto => {
+            let found = state
+                .detected_terminal
+                .map_or("not detected", TerminalKind::label);
+            format!("Auto → {found}")
+        }
+        chosen => chosen.label().to_string(),
+    }
+}
+
+/// Small centered list for choosing the terminal.
+fn render_terminal_picker(frame: &mut Frame, state: &AppState) {
+    let Some(highlight) = state.terminal_picker else {
+        return;
+    };
+    let screen = frame.area();
+    let rows = TerminalKind::ALL.len() as u16 + 2;
+    let width = PICKER_WIDTH.min(screen.width);
+    let height = rows.min(screen.height);
+    let popup = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+
+    let block = Block::bordered()
+        .title(PICKER_TITLE)
+        .border_style(Style::new().fg(ACCENT));
+    let inner = block.inner(popup);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+
+    let lines: Vec<Line> = TerminalKind::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| {
+            let pointer = if index == highlight { "▶" } else { " " };
+            let chosen = if *kind == state.config.terminal {
+                "●"
+            } else {
+                " "
+            };
+            let note = match kind {
+                TerminalKind::Auto => {
+                    let found = state
+                        .detected_terminal
+                        .map_or("not detected", TerminalKind::label);
+                    format!(" → {found}")
+                }
+                other => other
+                    .launch_note()
+                    .map_or(String::new(), |n| format!(" ({n})")),
+            };
+            let style = if index == highlight {
+                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new()
+            };
+            Line::styled(format!(" {pointer} {chosen} {}{note}", kind.label()), style)
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Centered overlay with the doctor report (or a progress note).
@@ -162,6 +234,10 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
         Span::styled(
             format!(" ({})", state.project.layout.label()),
+            Style::new().fg(MUTED),
+        ),
+        Span::styled(
+            format!("  terminal: {}", terminal_summary(state)),
             Style::new().fg(MUTED),
         ),
     ]);
@@ -332,6 +408,113 @@ mod tests {
             doctor: DoctorPanel::Ready(report),
             doctor_scroll: scroll,
             ..state()
+        }
+    }
+
+    #[test]
+    fn control_characters_from_untrusted_text_never_reach_the_screen() {
+        // Project names, status messages and tool errors come from repos and
+        // programs we don't control; an ESC would let them drive the terminal.
+        let mut hostile = state();
+        hostile.project.name = "evil\x1b[2J\x1b]0;pwned\x07name".into();
+        hostile.status = Some("err\x1b[31m\rred\x1b[0m\nnext".into());
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &hostile)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let has_control = buffer
+            .content()
+            .iter()
+            .any(|cell| cell.symbol().chars().any(char::is_control));
+        assert!(!has_control, "a control character reached the buffer");
+    }
+
+    #[test]
+    fn terminal_summary_resolves_auto_with_what_was_detected() {
+        let auto_found = AppState {
+            detected_terminal: Some(TerminalKind::Iterm2),
+            ..state()
+        };
+        let auto_unknown = state();
+        let mut explicit = state();
+        explicit.config.terminal = TerminalKind::Tmux;
+
+        assert_eq!(terminal_summary(&auto_found), "Auto → iTerm2");
+        assert_eq!(terminal_summary(&auto_unknown), "Auto → not detected");
+        assert_eq!(terminal_summary(&explicit), "tmux");
+    }
+
+    #[test]
+    fn header_shows_the_terminal() {
+        let screen = draw(&AppState {
+            detected_terminal: Some(TerminalKind::Iterm2),
+            ..state()
+        });
+
+        assert!(screen.contains("Auto → iTerm2"), "{screen}");
+    }
+
+    #[test]
+    fn terminal_picker_is_hidden_while_closed() {
+        assert!(!draw(&state()).contains("Enter select"));
+    }
+
+    #[test]
+    fn terminal_picker_lists_every_choice_with_notes() {
+        let open = AppState {
+            terminal_picker: Some(2),
+            detected_terminal: Some(TerminalKind::Iterm2),
+            ..state()
+        };
+
+        let screen = draw(&open);
+
+        for kind in TerminalKind::ALL {
+            assert!(
+                screen.contains(kind.label()),
+                "missing {} in:\n{screen}",
+                kind.label()
+            );
+        }
+        assert!(screen.contains("Enter select"));
+        assert!(
+            screen.contains("→ iTerm2"),
+            "auto shows what it detected:\n{screen}"
+        );
+        assert!(screen.contains("you split manually"));
+        assert!(screen.contains("opens a new window"));
+    }
+
+    #[test]
+    fn terminal_picker_marks_the_highlight_and_the_current_choice() {
+        let mut open = AppState {
+            terminal_picker: Some(2),
+            ..state()
+        };
+        open.config.terminal = TerminalKind::Tmux;
+
+        let screen = draw(&open);
+
+        let has = |marker: &str, label: &str| {
+            screen
+                .lines()
+                .any(|l| l.contains(marker) && l.contains(label))
+        };
+        assert!(has("▶", "Ghostty"), "highlight on row 2:\n{screen}");
+        assert!(has("●", "tmux"), "configured choice is marked:\n{screen}");
+        assert!(!has("●", "kitty") && !has("▶", "kitty"));
+    }
+
+    #[test]
+    fn terminal_picker_does_not_panic_on_tiny_terminals() {
+        for (w, h) in [(10, 3), (30, 6), (200, 5), (8000, 10)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            let open = AppState {
+                terminal_picker: Some(0),
+                ..state()
+            };
+            terminal.draw(|frame| render(frame, &open)).unwrap();
         }
     }
 

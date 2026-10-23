@@ -3,9 +3,11 @@
 mod branch_watch;
 mod cli;
 mod doctor_cmd;
+mod editor;
 mod event_loop;
 mod keymap;
 mod paths;
+mod settings;
 
 use clap::Parser;
 use color_eyre::Result;

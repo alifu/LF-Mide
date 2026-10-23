@@ -6,10 +6,11 @@ description = "LF-Mide dependency checks (lf-mide doctor)"
 
 [dependencies]
 lf-mide-core.workspace = true
-libc.workspace = true
+lf-mide-system.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

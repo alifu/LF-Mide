@@ -1,12 +1,13 @@
 //! Dependency checks behind `lf-mide doctor`.
 
 pub mod checks;
-#[cfg(test)]
-mod fake;
 pub mod props;
 pub mod report;
-pub mod system;
 pub mod version;
+
+pub use lf_mide_system as system;
+#[cfg(test)]
+pub(crate) use lf_mide_system::fake;
 
 use checks::{Ctx, all, run_checks};
 use lf_mide_core::{Project, Report};

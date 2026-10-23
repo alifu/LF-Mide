@@ -9,6 +9,8 @@ edition = "2024"
 [workspace.dependencies]
 lf-mide-core = { path = "crates/core" }
 lf-mide-doctor = { path = "crates/doctor" }
+lf-mide-system = { path = "crates/system" }
+lf-mide-terminal = { path = "crates/terminal" }
 lf-mide-vcs = { path = "crates/vcs" }
 lf-mide-ui = { path = "crates/ui" }
 

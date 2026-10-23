@@ -33,6 +33,68 @@ pub fn log_dir() -> Option<PathBuf> {
     ProjectDirs::from("", "", APP_NAME).map(|dirs| dirs.cache_dir().to_path_buf())
 }
 
+/// `<base>/lf-mide-<pid>/`, a directory only this user can enter, so no
+/// other local user can sit on or replace the socket or launcher inside it.
+/// Creates it, or reuses our own earlier one (clearing a stale socket).
+pub fn editor_dir(base: &Path, pid: u32) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let dir = base.join(format!("lf-mide-{pid}"));
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            ensure_private(&dir)?;
+            // A socket left by an earlier process with the same pid would
+            // make `nvim --listen` fail.
+            match std::fs::remove_file(dir.join("nvim.sock")) {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err),
+                _ => {}
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    Ok(dir)
+}
+
+/// Writes the launcher script into `dir` as an executable file only this
+/// user can touch, replacing any earlier one (never following a symlink).
+pub fn write_launcher(dir: &Path, script: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = dir.join("open-nvim.sh");
+    // Remove first (this removes a symlink itself, not its target), then
+    // create_new so we can never write through one.
+    match std::fs::remove_file(&path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err),
+        _ => {}
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o700)
+        .open(&path)?;
+    file.write_all(script.as_bytes())?;
+    Ok(path)
+}
+
+/// An existing directory is only reused if it is really ours and closed to
+/// everyone else (not a symlink, not group/world accessible).
+fn ensure_private(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::symlink_metadata(dir)?;
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    let me = unsafe { libc::geteuid() };
+    if meta.is_dir() && meta.mode() & 0o777 == 0o700 && meta.uid() == me {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!("{} is not a private directory owned by you", dir.display()),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +127,98 @@ mod tests {
         assert_eq!(
             project_config(Path::new("/p")),
             PathBuf::from("/p/.lfmide.toml")
+        );
+    }
+
+    #[test]
+    fn editor_dir_is_private_and_named_for_the_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::TempDir::new().unwrap();
+
+        let dir = editor_dir(base.path(), 42).unwrap();
+
+        assert_eq!(dir, base.path().join("lf-mide-42"));
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn editor_dir_reuses_our_own_directory_and_clears_a_stale_socket() {
+        let base = tempfile::TempDir::new().unwrap();
+        let first = editor_dir(base.path(), 7).unwrap();
+        std::fs::write(first.join("nvim.sock"), "stale").unwrap();
+
+        let second = editor_dir(base.path(), 7).unwrap();
+
+        assert_eq!(first, second);
+        assert!(!second.join("nvim.sock").exists());
+    }
+
+    #[test]
+    fn editor_dir_refuses_directories_others_could_use() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let base = tempfile::TempDir::new().unwrap();
+        let open_dir = base.path().join("lf-mide-1");
+        std::fs::create_dir(&open_dir).unwrap();
+        std::fs::set_permissions(&open_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let elsewhere = base.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        symlink(&elsewhere, base.path().join("lf-mide-2")).unwrap();
+
+        assert!(
+            editor_dir(base.path(), 1).is_err(),
+            "group/world accessible"
+        );
+        assert!(editor_dir(base.path(), 2).is_err(), "symlink");
+    }
+
+    #[test]
+    fn write_launcher_creates_an_executable_private_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let path = write_launcher(dir.path(), "#!/bin/sh\necho hi\n").unwrap();
+
+        assert_eq!(path, dir.path().join("open-nvim.sh"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "#!/bin/sh\necho hi\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let out = std::process::Command::new(&path).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "hi\n");
+    }
+
+    #[test]
+    fn write_launcher_replaces_an_earlier_script() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_launcher(dir.path(), "old").unwrap();
+
+        let path = write_launcher(dir.path(), "new").unwrap();
+
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "new");
+    }
+
+    #[test]
+    fn write_launcher_does_not_write_through_a_planted_symlink() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "precious").unwrap();
+        let sub = dir.path().join("private");
+        std::fs::create_dir(&sub).unwrap();
+        std::os::unix::fs::symlink(&victim, sub.join("open-nvim.sh")).unwrap();
+
+        let path = write_launcher(&sub, "#!/bin/sh\n").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "precious");
+        assert!(
+            !std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
         );
     }
 }

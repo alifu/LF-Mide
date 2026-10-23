@@ -883,8 +883,11 @@ dependencies = [
  "futures",
  "lf-mide-core",
  "lf-mide-doctor",
+ "lf-mide-system",
+ "lf-mide-terminal",
  "lf-mide-ui",
  "lf-mide-vcs",
+ "libc",
  "ratatui",
  "tempfile",
  "tokio",
@@ -909,9 +912,27 @@ name = "lf-mide-doctor"
 version = "0.1.0"
 dependencies = [
  "lf-mide-core",
- "libc",
+ "lf-mide-system",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "lf-mide-system"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+]
+
+[[package]]
+name = "lf-mide-terminal"
+version = "0.1.0"
+dependencies = [
+ "lf-mide-core",
+ "lf-mide-system",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

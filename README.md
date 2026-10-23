@@ -45,7 +45,7 @@ Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
 | JDK 17 or 21 | Gradle, Kotlin language server |
 | Android command-line tools (`platform-tools`, `emulator`, a system image) | Android builds, no Android Studio needed |
 | Xcode (CLI tools + one iOS simulator runtime) | iOS SDK and simulators. Xcode stays installed, but you don't need to open it |
-| [kotlin-lsp](https://github.com/Kotlin/kotlin-lsp) | Kotlin / Compose completion |
+| [kotlin-lsp](https://github.com/Kotlin/kotlin-lsp) | Optional. Kotlin completion for plain JVM Gradle projects (it does not support Kotlin Multiplatform yet) |
 | [xcode-build-server](https://github.com/SolaWing/xcode-build-server) | Swift / ObjC completion via `sourcekit-lsp` |
 | [ripgrep](https://github.com/BurntSushi/ripgrep) | Project search |
 
@@ -68,8 +68,28 @@ cargo build --release
 ./target/release/lf-mide /path/to/your/cmp-project   # or run it inside the project
 ```
 
-Keys so far: `Tab` / `Shift-Tab` move focus, `D` opens the doctor panel, `q` or `Ctrl-C` quits.
+Keys so far: `Tab` / `Shift-Tab` move focus, `e` opens Neovim in a split pane, `T` picks the terminal, `D` opens the
+doctor panel, `q` or `Ctrl-C` quits.
 In the doctor panel: `j`/`k` or arrows scroll, `PageUp`/`PageDown` page, `r` re-runs the checks, `Esc` or `D` closes.
+
+## Terminal and the editor split
+
+`e` starts `nvim --listen <socket>` in a new pane next to LF-Mide, in your project folder, using the terminal you
+chose (`T`, or `terminal = "..."` in the config; `auto` detects it from the environment).
+
+| Terminal | What `e` does |
+|---|---|
+| iTerm2 | splits the current session to the right (AppleScript; macOS asks once to allow Automation) |
+| tmux | `split-window -h` (LF-Mide must run inside tmux; tmux wins over the hosting terminal) |
+| WezTerm | `wezterm cli split-pane --right` |
+| kitty | `kitty @ launch --location=vsplit` (needs `allow_remote_control`; built from the docs, **not tested**) |
+| Terminal.app | opens a new window (no splits) |
+| Ghostty | cannot be driven from outside: the launcher path is copied to the clipboard, you split a pane (Cmd+D) and paste it |
+
+Nothing taken from the project folder name is ever put on a command line that a shell, a terminal or AppleScript
+has to interpret (a cloned repository controls that name). Instead LF-Mide writes `open-nvim.sh` (mode 0700) and the
+Neovim socket into a private folder (`lf-mide-<pid>/`, mode 0700) under your temp directory, and the terminal is only
+told to run that script's path.
 
 ## Doctor
 
@@ -120,6 +140,8 @@ crates/
 ├── app/              # lf-mide binary: CLI, event loop, keymap, background tasks
 ├── core/             # state, actions, pure reducer, config, project detection, doctor result types
 ├── doctor/           # dependency checks behind `lf-mide doctor`
+├── system/           # running commands / reading the machine behind a trait (shared, testable)
+├── terminal/         # terminal detection and split-pane launching
 ├── ui/               # ratatui rendering (pure view of the state)
 └── vcs/              # git: branch, dirty state
 spikes/

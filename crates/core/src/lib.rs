@@ -9,7 +9,7 @@ pub mod reducer;
 pub mod state;
 
 pub use action::Action;
-pub use config::{Config, ConfigError, TerminalKind};
+pub use config::{Config, ConfigError, TerminalKind, set_terminal_in_config};
 pub use doctor::{
     Category, CheckResult, LineKind, Report, ReportLine, Status, popup_content_rows, popup_height,
 };

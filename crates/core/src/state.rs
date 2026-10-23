@@ -1,6 +1,8 @@
 //! Application state. Treated as immutable: the reducer returns new values.
 
-use crate::config::Config;
+use std::path::PathBuf;
+
+use crate::config::{Config, TerminalKind};
 use crate::doctor::Report;
 use crate::project::Project;
 
@@ -65,6 +67,12 @@ pub struct AppState {
     /// First visible line of the doctor report.
     pub doctor_scroll: u16,
     pub terminal_height: u16,
+    /// What `TerminalKind::Auto` resolved to at startup, if anything.
+    pub detected_terminal: Option<TerminalKind>,
+    /// Highlighted row of the terminal picker while it is open.
+    pub terminal_picker: Option<usize>,
+    /// Where the Neovim we launched listens, once it is open.
+    pub editor_socket: Option<PathBuf>,
 }
 
 impl AppState {
@@ -79,6 +87,9 @@ impl AppState {
             doctor: DoctorPanel::Closed,
             doctor_scroll: 0,
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
+            detected_terminal: None,
+            terminal_picker: None,
+            editor_socket: None,
         }
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use crate::system::{Output, RunError, System};
+use crate::{Output, RunError, System};
 
 #[derive(Default)]
 pub struct FakeSystem {
@@ -53,6 +53,17 @@ impl FakeSystem {
             success: false,
             stdout: String::new(),
             stderr: String::new(),
+        };
+        self.commands.insert(cmd.into(), Ok(output));
+        self
+    }
+
+    /// A command that runs, exits non-zero and prints `stderr`.
+    pub fn fails(mut self, cmd: &str, stderr: &str) -> Self {
+        let output = Output {
+            success: false,
+            stdout: String::new(),
+            stderr: stderr.into(),
         };
         self.commands.insert(cmd.into(), Ok(output));
         self

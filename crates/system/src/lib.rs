@@ -1,5 +1,8 @@
-//! Everything a check may observe about the machine, behind one trait so
+//! Everything LF-Mide observes or runs on the machine, behind one trait so
 //! tests can substitute canned command output and files.
+
+#[cfg(any(test, feature = "testing"))]
+pub mod fake;
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;
@@ -183,13 +186,12 @@ impl System for SystemRunner {
         };
 
         // The child is done, but a background process it started may still
-        // hold the pipes open. Wait briefly, then stop whatever is left.
+        // hold the pipes open. Wait briefly and return what was read. We do
+        // not kill leftovers: the child is already reaped, so its group id
+        // could by now belong to an unrelated process.
         let grace = Instant::now() + PIPE_GRACE;
-        let (stdout, stdout_closed) = stdout.finish(grace);
-        let (stderr, stderr_closed) = stderr.finish(grace);
-        if !(stdout_closed && stderr_closed) {
-            kill_group(group);
-        }
+        let (stdout, _) = stdout.finish(grace);
+        let (stderr, _) = stderr.finish(grace);
         Ok(Output {
             success: status.success(),
             stdout,
@@ -301,7 +303,7 @@ mod tests {
         let started = Instant::now();
 
         let out = SystemRunner::new()
-            .run("sh", &["-c", "echo hi; sleep 30 &"])
+            .run("sh", &["-c", "echo hi; sleep 3 &"])
             .unwrap();
 
         assert!(

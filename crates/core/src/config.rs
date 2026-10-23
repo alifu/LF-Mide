@@ -20,6 +20,88 @@ pub enum TerminalKind {
     Tmux,
 }
 
+impl TerminalKind {
+    /// Every choice, in the order the picker lists them.
+    pub const ALL: [TerminalKind; 7] = [
+        TerminalKind::Auto,
+        TerminalKind::Iterm2,
+        TerminalKind::Ghostty,
+        TerminalKind::Wezterm,
+        TerminalKind::Kitty,
+        TerminalKind::Terminal,
+        TerminalKind::Tmux,
+    ];
+
+    /// Name for people.
+    pub fn label(self) -> &'static str {
+        match self {
+            TerminalKind::Auto => "Auto-detect",
+            TerminalKind::Iterm2 => "iTerm2",
+            TerminalKind::Ghostty => "Ghostty",
+            TerminalKind::Wezterm => "WezTerm",
+            TerminalKind::Kitty => "kitty",
+            TerminalKind::Terminal => "Terminal.app",
+            TerminalKind::Tmux => "tmux",
+        }
+    }
+
+    /// What to expect when LF-Mide opens Neovim next to itself in this
+    /// terminal, if it is not a plain split.
+    pub fn launch_note(self) -> Option<&'static str> {
+        match self {
+            TerminalKind::Ghostty => Some("you split manually"),
+            TerminalKind::Terminal => Some("opens a new window"),
+            _ => None,
+        }
+    }
+
+    /// The value written in the config file (`terminal = "iterm2"`).
+    pub fn config_name(self) -> &'static str {
+        match self {
+            TerminalKind::Auto => "auto",
+            TerminalKind::Iterm2 => "iterm2",
+            TerminalKind::Ghostty => "ghostty",
+            TerminalKind::Wezterm => "wezterm",
+            TerminalKind::Kitty => "kitty",
+            TerminalKind::Terminal => "terminal",
+            TerminalKind::Tmux => "tmux",
+        }
+    }
+}
+
+/// `text` (a config file) with its `terminal` setting set to `kind`: an
+/// existing `terminal = ...` line is replaced in place, otherwise one is
+/// appended. Everything else, comments included, is kept as is.
+pub fn set_terminal_in_config(text: &str, kind: TerminalKind) -> String {
+    let setting = format!("terminal = \"{}\"", kind.config_name());
+    let is_terminal_line = |line: &str| {
+        line.trim_start()
+            .strip_prefix("terminal")
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    };
+
+    if text.lines().any(is_terminal_line) {
+        let replaced: Vec<&str> = text
+            .lines()
+            .map(|line| {
+                if is_terminal_line(line) {
+                    setting.as_str()
+                } else {
+                    line
+                }
+            })
+            .collect();
+        return format!("{}\n", replaced.join("\n"));
+    }
+    let mut out = text.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&setting);
+    out.push('\n');
+    out
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Prefix key for IDE commands, in Vim notation (e.g. `C-Space`).
@@ -168,5 +250,96 @@ mod tests {
         assert_eq!(config.terminal, TerminalKind::Tmux);
         assert!(!config.show_perf);
         assert_eq!(only_defaults, Config::default());
+    }
+
+    #[test]
+    fn config_names_round_trip_through_the_parser() {
+        for kind in TerminalKind::ALL {
+            let toml = format!("terminal = \"{}\"\n", kind.config_name());
+
+            let parsed = Config::default()
+                .merged(&toml, Path::new("x.toml"))
+                .unwrap();
+
+            assert_eq!(parsed.terminal, kind, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn launch_notes_flag_terminals_that_do_not_split() {
+        assert_eq!(
+            TerminalKind::Ghostty.launch_note(),
+            Some("you split manually")
+        );
+        assert_eq!(
+            TerminalKind::Terminal.launch_note(),
+            Some("opens a new window")
+        );
+        for kind in [
+            TerminalKind::Iterm2,
+            TerminalKind::Tmux,
+            TerminalKind::Wezterm,
+            TerminalKind::Kitty,
+            TerminalKind::Auto,
+        ] {
+            assert_eq!(kind.launch_note(), None, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn labels_are_for_people() {
+        assert_eq!(TerminalKind::Iterm2.label(), "iTerm2");
+        assert_eq!(TerminalKind::Terminal.label(), "Terminal.app");
+        assert_eq!(TerminalKind::Auto.label(), "Auto-detect");
+        assert_eq!(TerminalKind::ALL.len(), 7);
+    }
+
+    #[test]
+    fn set_terminal_replaces_the_existing_line_in_place() {
+        let text = "# my settings\nleader = \"C-a\"\nterminal = \"ghostty\"\nshow_perf = false\n";
+
+        let updated = set_terminal_in_config(text, TerminalKind::Iterm2);
+
+        assert_eq!(
+            updated,
+            "# my settings\nleader = \"C-a\"\nterminal = \"iterm2\"\nshow_perf = false\n"
+        );
+    }
+
+    #[test]
+    fn set_terminal_appends_when_missing_and_handles_empty_files() {
+        assert_eq!(
+            set_terminal_in_config("", TerminalKind::Tmux),
+            "terminal = \"tmux\"\n"
+        );
+        assert_eq!(
+            set_terminal_in_config("show_blame = true", TerminalKind::Tmux),
+            "show_blame = true\nterminal = \"tmux\"\n"
+        );
+        assert_eq!(
+            set_terminal_in_config("show_blame = true\n", TerminalKind::Kitty),
+            "show_blame = true\nterminal = \"kitty\"\n"
+        );
+    }
+
+    #[test]
+    fn set_terminal_ignores_comments_and_similar_keys() {
+        let text = "# terminal = \"kitty\"\nterminal_font = \"x\"\n";
+
+        let updated = set_terminal_in_config(text, TerminalKind::Wezterm);
+
+        assert!(updated.starts_with("# terminal = \"kitty\"\nterminal_font = \"x\"\n"));
+        assert!(updated.ends_with("terminal = \"wezterm\"\n"));
+    }
+
+    #[test]
+    fn set_terminal_accepts_tight_spacing_and_the_result_parses() {
+        let updated = set_terminal_in_config("terminal=\"auto\"\n", TerminalKind::Terminal);
+
+        assert_eq!(updated, "terminal = \"terminal\"\n");
+        let parsed = Config::default()
+            .merged(&updated, Path::new("x.toml"))
+            .unwrap();
+        assert_eq!(parsed.terminal, TerminalKind::Terminal);
     }
 }
