@@ -14,6 +14,7 @@ color-eyre.workspace = true
 crossterm.workspace = true
 directories.workspace = true
 futures.workspace = true
+lf-mide-build.workspace = true
 lf-mide-core.workspace = true
 lf-mide-doctor.workspace = true
 lf-mide-editor.workspace = true

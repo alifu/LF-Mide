@@ -6,7 +6,10 @@ pub mod config;
 pub mod devices;
 pub mod doctor;
 pub mod layout;
+pub mod logparse;
 pub mod nav;
+pub mod output;
+mod output_reducer;
 pub mod prefs;
 pub mod project;
 pub mod props;
@@ -23,6 +26,10 @@ pub use doctor::{
     Category, CheckResult, LineKind, Report, ReportLine, Status, popup_content_rows, popup_height,
 };
 pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
+pub use output::{
+    BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LOG_CAPACITY, LogBuffer, LogLevel,
+    LogRequest, MAX_PROBLEMS, OutputFilter, OutputTab, Problem, Severity,
+};
 pub use prefs::{ProjectPrefs, prefs_file_name};
 pub use project::{Project, ProjectError, ProjectLayout};
 pub use reducer::reduce;

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crate::devices::{Device, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit};
+use crate::output::{BuildOutcome, OutputTab};
 use crate::prefs::ProjectPrefs;
 use crate::state::BranchInfo;
 use crate::state::Panel;
@@ -115,4 +116,58 @@ pub enum Action {
     PrefsLoaded(ProjectPrefs),
     /// Show or hide the environment (SDK) overlay.
     ToggleInfo,
+    /// Build the app and run it on the chosen device.
+    RunApp,
+    /// Stop the build in progress.
+    CancelBuild,
+    /// What build `id` is doing now ("Installing", ...).
+    BuildStep {
+        id: u64,
+        step: String,
+    },
+    /// Output lines of build `id`.
+    BuildOutput {
+        id: u64,
+        lines: Vec<String>,
+    },
+    /// Build `id` ended after `millis`.
+    BuildFinished {
+        id: u64,
+        outcome: BuildOutcome,
+        millis: u64,
+    },
+    /// Follow (or stop following) the log of the chosen device.
+    ToggleLogs,
+    /// Lines from device log stream `id`.
+    LogOutput {
+        platform: Platform,
+        id: u64,
+        lines: Vec<String>,
+    },
+    /// Device log stream `id` ended, with the reason if it failed.
+    LogEnded {
+        platform: Platform,
+        id: u64,
+        reason: Option<String>,
+    },
+    /// Show this Output tab.
+    ShowOutputTab(OutputTab),
+    /// Move to the next (positive) or previous Output tab.
+    OutputTabMove(i16),
+    /// Scroll the Output panel; positive goes back in time.
+    OutputScroll(i32),
+    /// Jump to the newest line and follow from there.
+    OutputFollow,
+    /// Empty the log shown in the Output panel.
+    ClearOutput,
+    /// Start typing a text filter for the logs.
+    FilterOpen,
+    FilterInput(char),
+    FilterBackspace,
+    /// Stop typing but keep the filter.
+    FilterDone,
+    /// Drop the text filter and stop typing.
+    FilterClear,
+    /// Show only louder log lines (wraps back to all).
+    CycleLogLevel,
 }

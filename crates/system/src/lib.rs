@@ -3,6 +3,7 @@
 
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
+pub mod stream;
 
 use std::io::Read;
 use std::os::unix::process::CommandExt;

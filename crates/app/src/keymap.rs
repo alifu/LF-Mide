@@ -2,7 +2,7 @@
 //! on screen, so the current state is an input.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use lf_mide_core::{Action, AppState, DoctorPanel, Panel};
+use lf_mide_core::{Action, AppState, DoctorPanel, OutputTab, Panel};
 
 const PAGE_LINES: i16 = 10;
 
@@ -19,6 +19,9 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     }
     if state.grep.is_some() {
         return grep_key(state, key);
+    }
+    if state.output_filter.editing {
+        return filter_key(key);
     }
     if state.terminal_picker.is_some() {
         return picker_key(key.code);
@@ -54,8 +57,17 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
     {
         return Some(action);
     }
+    if state.focus == Panel::Bottom
+        && let Some(action) = output_key(state, code)
+    {
+        return Some(action);
+    }
     match code {
         KeyCode::Char('q') if !ctrl => Some(Action::Quit),
+        KeyCode::Char('B') => Some(Action::RunApp),
+        KeyCode::Char('s') => Some(Action::CancelBuild),
+        KeyCode::Char('L') => Some(Action::ToggleLogs),
+        KeyCode::Char('o') => Some(Action::Focus(Panel::Bottom)),
         KeyCode::Char('t') => Some(Action::ToggleTarget),
         KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
         KeyCode::Char('i') => Some(Action::ToggleInfo),
@@ -79,6 +91,47 @@ fn device_key(code: KeyCode) -> Option<Action> {
         KeyCode::Char('b') => Some(Action::BootDevice),
         KeyCode::Char('x') => Some(Action::StopDevice),
         KeyCode::Char('r') => Some(Action::RefreshDevices),
+        _ => None,
+    }
+}
+
+/// Typing a log filter: printable characters, including `q`, are text.
+fn filter_key(key: KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Esc => Some(Action::FilterClear),
+        KeyCode::Enter => Some(Action::FilterDone),
+        KeyCode::Backspace => Some(Action::FilterBackspace),
+        KeyCode::Char(ch) if !ctrl && !alt => Some(Action::FilterInput(ch)),
+        _ => None,
+    }
+}
+
+/// Keys that act on the Output panel while it has focus.
+fn output_key(state: &AppState, code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('[') => Some(Action::OutputTabMove(-1)),
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Char(']') => Some(Action::OutputTabMove(1)),
+        KeyCode::Char(digit @ '1'..='5') => {
+            let index = usize::from(digit as u8 - b'1');
+            Some(Action::ShowOutputTab(OutputTab::ALL[index]))
+        }
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::OutputScroll(-1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::OutputScroll(1)),
+        KeyCode::PageDown => Some(Action::OutputScroll(-i32::from(PAGE_LINES))),
+        KeyCode::PageUp => Some(Action::OutputScroll(i32::from(PAGE_LINES))),
+        KeyCode::Char('g') => Some(Action::OutputScroll(i32::MAX)),
+        KeyCode::Char('G') => Some(Action::OutputFollow),
+        KeyCode::Char('c') => Some(Action::ClearOutput),
+        KeyCode::Char('F') => Some(Action::FilterOpen),
+        KeyCode::Char('v') => Some(Action::CycleLogLevel),
+        KeyCode::Enter if state.output_tab == OutputTab::Problems => {
+            Some(match state.selected_problem_target() {
+                Ok((path, line)) => Action::OpenFile { path, line },
+                Err(message) => Action::Status(message),
+            })
+        }
         _ => None,
     }
 }
@@ -237,6 +290,116 @@ mod tests {
         assert_eq!(
             action_for(&closed(), press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(Action::Quit)
+        );
+    }
+
+    fn bottom() -> AppState {
+        reduce(closed(), Action::Focus(Panel::Bottom))
+    }
+
+    #[test]
+    fn build_and_log_keys_work_from_any_panel() {
+        for (code, expected) in [
+            ('B', Action::RunApp),
+            ('s', Action::CancelBuild),
+            ('L', Action::ToggleLogs),
+            ('o', Action::Focus(Panel::Bottom)),
+        ] {
+            assert_eq!(action(&closed(), KeyCode::Char(code)), Some(expected));
+        }
+    }
+
+    #[test]
+    fn the_output_panel_steps_through_tabs_and_scrolls() {
+        let s = bottom();
+
+        assert_eq!(
+            action(&s, KeyCode::Char('l')),
+            Some(Action::OutputTabMove(1))
+        );
+        assert_eq!(
+            action(&s, KeyCode::Char('[')),
+            Some(Action::OutputTabMove(-1))
+        );
+        assert_eq!(
+            action(&s, KeyCode::Char('4')),
+            Some(Action::ShowOutputTab(OutputTab::Problems))
+        );
+        assert_eq!(
+            action(&s, KeyCode::Char('k')),
+            Some(Action::OutputScroll(1))
+        );
+        assert_eq!(action(&s, KeyCode::Down), Some(Action::OutputScroll(-1)));
+        assert_eq!(action(&s, KeyCode::Char('G')), Some(Action::OutputFollow));
+        assert_eq!(action(&s, KeyCode::Char('c')), Some(Action::ClearOutput));
+    }
+
+    #[test]
+    fn typing_a_filter_treats_letters_as_text_and_enter_and_escape_end_it() {
+        let editing = reduce(bottom(), Action::FilterOpen);
+
+        assert_eq!(
+            action(&editing, KeyCode::Char('q')),
+            Some(Action::FilterInput('q'))
+        );
+        assert_eq!(
+            action(&editing, KeyCode::Char('B')),
+            Some(Action::FilterInput('B'))
+        );
+        assert_eq!(
+            action(&editing, KeyCode::Backspace),
+            Some(Action::FilterBackspace)
+        );
+        assert_eq!(action(&editing, KeyCode::Enter), Some(Action::FilterDone));
+        assert_eq!(action(&editing, KeyCode::Esc), Some(Action::FilterClear));
+        assert_eq!(
+            action_for(&editing, press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn the_output_panel_opens_the_filter_and_cycles_the_level() {
+        assert_eq!(
+            action(&bottom(), KeyCode::Char('F')),
+            Some(Action::FilterOpen)
+        );
+        assert_eq!(
+            action(&bottom(), KeyCode::Char('v')),
+            Some(Action::CycleLogLevel)
+        );
+        assert_eq!(action(&closed(), KeyCode::Char('v')), None);
+    }
+
+    #[test]
+    fn output_keys_do_nothing_when_another_panel_has_focus() {
+        assert_eq!(action(&closed(), KeyCode::Char('4')), None);
+        assert_eq!(action(&closed(), KeyCode::Char('c')), None);
+    }
+
+    #[test]
+    fn enter_on_a_problem_opens_it_and_explains_when_it_cannot() {
+        let mut s = bottom();
+        s.output_tab = OutputTab::Problems;
+        let issue = |path: Option<&str>| lf_mide_core::Problem {
+            severity: lf_mide_core::Severity::Error,
+            path: path.map(String::from),
+            line: Some(7),
+            column: None,
+            message: "bad".into(),
+        };
+        s.problems = std::sync::Arc::new(vec![issue(Some("/p/shared/A.kt")), issue(None)]);
+
+        assert_eq!(
+            action(&s, KeyCode::Enter),
+            Some(Action::OpenFile {
+                path: PathBuf::from("shared/A.kt"),
+                line: Some(7)
+            })
+        );
+        s.problem_selected = 1;
+        assert!(
+            matches!(action(&s, KeyCode::Enter), Some(Action::Status(m)) if m.contains("no source location"))
         );
     }
 

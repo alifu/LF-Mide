@@ -1,0 +1,18 @@
+[package]
+name = "lf-mide-build"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide build, install, launch and device-log pipelines for Android and iOS"
+
+[dependencies]
+lf-mide-core.workspace = true
+lf-mide-platform.workspace = true
+lf-mide-system.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

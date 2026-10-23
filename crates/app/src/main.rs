@@ -6,6 +6,7 @@ mod doctor_cmd;
 mod editor;
 mod effects;
 mod event_loop;
+mod jobs;
 mod keymap;
 mod paths;
 mod settings;

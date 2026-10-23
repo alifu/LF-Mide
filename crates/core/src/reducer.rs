@@ -10,6 +10,7 @@ use crate::devices::{Device, DeviceState, Platform};
 use crate::doctor::{Report, popup_content_rows};
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
 use crate::nav::{parent_row, tree_rows};
+use crate::output_reducer;
 use crate::state::{
     AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
     MAX_TRANSITION_POLLS, Transition,
@@ -259,6 +260,40 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             info_open: !state.info_open,
             ..state
         },
+        Action::RunApp => output_reducer::run_app(state),
+        Action::CancelBuild => output_reducer::cancel_build(state),
+        Action::BuildStep { id, step } => output_reducer::build_step(state, id, step),
+        Action::BuildOutput { id, lines } => output_reducer::build_output(state, id, lines),
+        Action::BuildFinished {
+            id,
+            outcome,
+            millis,
+        } => output_reducer::build_finished(state, id, outcome, millis),
+        Action::ToggleLogs => output_reducer::toggle_logs(state),
+        Action::LogOutput {
+            platform,
+            id,
+            lines,
+        } => output_reducer::log_output(state, platform, id, lines),
+        Action::LogEnded {
+            platform,
+            id,
+            reason,
+        } => output_reducer::log_ended(state, platform, id, reason),
+        Action::ShowOutputTab(tab) => output_reducer::show_tab(state, tab),
+        Action::OutputTabMove(by) => {
+            let tab = state.output_tab.moved(by);
+            output_reducer::show_tab(state, tab)
+        }
+        Action::OutputScroll(delta) => output_reducer::scroll(state, delta),
+        Action::OutputFollow => output_reducer::follow(state),
+        Action::ClearOutput => output_reducer::clear(state),
+        Action::FilterOpen => output_reducer::filter_open(state),
+        Action::FilterInput(ch) => output_reducer::filter_input(state, ch),
+        Action::FilterBackspace => output_reducer::filter_backspace(state),
+        Action::FilterDone => output_reducer::filter_done(state),
+        Action::FilterClear => output_reducer::filter_clear(state),
+        Action::CycleLogLevel => output_reducer::cycle_level(state),
         Action::PrefsLoaded(prefs) => {
             let mut selected_devices = state.selected_devices.clone();
             for platform in Platform::ALL {
@@ -1067,16 +1102,16 @@ mod tests {
     fn moving_scrolls_to_keep_the_selection_visible() {
         let names: Vec<String> = (0..60).map(|i| format!("f{i:02}.txt")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        let s = reduce(loaded(&refs), Action::ViewportChanged(24)); // 12 rows fit
-        assert_eq!(files_viewport_rows(24), 12);
+        let s = reduce(loaded(&refs), Action::ViewportChanged(24)); // 10 rows fit
+        assert_eq!(files_viewport_rows(24), 10);
 
-        let at_bottom = reduce(s.clone(), Action::TreeMove(11));
-        let one_past = reduce(s.clone(), Action::TreeMove(12));
+        let at_bottom = reduce(s.clone(), Action::TreeMove(9));
+        let one_past = reduce(s.clone(), Action::TreeMove(10));
         let far = reduce(s, Action::TreeMove(40));
         let back_up = reduce(far.clone(), Action::TreeMove(-40));
 
         assert_eq!((at_bottom.tree_top, one_past.tree_top), (0, 1));
-        assert_eq!(far.tree_top, 29, "40 - 12 + 1");
+        assert_eq!(far.tree_top, 31, "40 - 10 + 1");
         assert_eq!((back_up.tree_selected, back_up.tree_top), (0, 0));
     }
 
@@ -1848,13 +1883,13 @@ mod tests {
                 )
             })
             .collect();
-        let s = reduce(with_devices(many), Action::ViewportChanged(30)); // 14 rows
+        let s = reduce(with_devices(many), Action::ViewportChanged(30)); // 12 rows
 
         let far = reduce(s.clone(), Action::DeviceMove(30));
         let back = reduce(far.clone(), Action::DeviceMove(-30));
 
-        assert_eq!(crate::layout::devices_viewport_rows(30), 14);
-        assert_eq!(far.device_top, 30 + 1 - 14);
+        assert_eq!(crate::layout::devices_viewport_rows(30), 12);
+        assert_eq!(far.device_top, 30 + 1 - 12);
         assert_eq!(back.device_top, 0);
     }
 

@@ -8,6 +8,7 @@ use crate::config::{Config, TerminalKind};
 use crate::devices::{Device, DeviceState, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit, TreeRow};
+use crate::output::{BuildState, Job, LogBuffer, OutputFilter, OutputTab, Problem};
 use crate::prefs::ProjectPrefs;
 use crate::project::Project;
 
@@ -165,6 +166,31 @@ pub struct AppState {
     pub pending_commands: Vec<DeviceCommand>,
     /// The environment overlay (SDK paths and versions) is open.
     pub info_open: bool,
+    pub output_tab: OutputTab,
+    pub build: BuildState,
+    pub build_log: Arc<LogBuffer>,
+    pub logcat: Arc<LogBuffer>,
+    pub ios_log: Arc<LogBuffer>,
+    /// Errors and warnings found in the last build's output.
+    pub problems: Arc<Vec<Problem>>,
+    pub problem_selected: usize,
+    pub output_filter: OutputFilter,
+    /// Per tab (by [`OutputTab::index`]): lines scrolled back from the end;
+    /// 0 follows new output.
+    pub output_scroll: [usize; OutputTab::ALL.len()],
+    /// Device logs being followed.
+    pub log_streams: BTreeMap<Platform, LogStream>,
+    /// Source of ids for builds and log streams.
+    pub last_job_id: u64,
+    /// Builds and log streams waiting to be started or stopped.
+    pub pending_jobs: Vec<Job>,
+}
+
+/// A device log being followed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogStream {
+    pub id: u64,
+    pub device: String,
 }
 
 impl AppState {
@@ -230,6 +256,18 @@ impl AppState {
             transitions: BTreeMap::new(),
             pending_commands: Vec::new(),
             info_open: false,
+            output_tab: OutputTab::Build,
+            build: BuildState::default(),
+            build_log: Arc::new(LogBuffer::default()),
+            logcat: Arc::new(LogBuffer::default()),
+            ios_log: Arc::new(LogBuffer::default()),
+            problems: Arc::new(Vec::new()),
+            problem_selected: 0,
+            output_filter: OutputFilter::default(),
+            output_scroll: [0; OutputTab::ALL.len()],
+            log_streams: BTreeMap::new(),
+            last_job_id: 0,
+            pending_jobs: Vec::new(),
         }
     }
 }

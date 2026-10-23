@@ -10,9 +10,10 @@ use ratatui::DefaultTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::{branch_watch, editor, effects, keymap, paths, settings};
+use crate::{branch_watch, editor, effects, jobs, keymap, paths, settings};
 
 /// The first AppleScript call may wait for the user to allow access.
 const EDITOR_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -36,6 +37,16 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     effects::spawn_sdk_info(tx.clone());
     let device_watch = effects::spawn_device_watch(tx.clone());
     let mut grep_scheduler = effects::GrepScheduler::default();
+    let cache = paths::log_dir().unwrap_or_else(|| std::env::temp_dir().join("lf-mide"));
+    let mut job_runner = jobs::JobRunner::default();
+    let job_env = jobs::JobEnv {
+        backlog: job_runner.backlog(),
+        root: state.project.root.clone(),
+        layout: state.project.layout,
+        derived_data: jobs::derived_data_dir(&cache, &state.project.root, &state.project.name),
+        tx: tx.clone(),
+    };
+    let mut quit_signals = QuitSignals::install();
     let result = loop {
         if state.should_quit {
             break Ok(());
@@ -46,6 +57,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         let input = tokio::select! {
             event = events.next() => Input::Terminal(event),
             Some(first) = rx.recv() => Input::Background(first),
+            () = quit_signals.arrived() => Input::Signal,
         };
         let actions = match input {
             Input::Terminal(Some(Ok(Event::Key(key)))) => {
@@ -58,8 +70,13 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             Input::Terminal(Some(Err(err))) => break Err(err.into()),
             Input::Terminal(None) => vec![Action::Quit],
             Input::Background(first) => drain(first, &mut rx),
+            // The terminal window closed or the app was asked to end: leave
+            // through the normal path so builds and logs are stopped.
+            Input::Signal => vec![Action::Quit],
         };
 
+        // Room for more job output now that these were taken off the queue.
+        job_runner.backlog().consumed(&actions);
         let was_running = state.doctor == DoctorPanel::Running;
         let scan_was_running = state.files_loading;
         let refresh_devices = actions.iter().any(|a| matches!(a, Action::RefreshDevices));
@@ -93,6 +110,12 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         }
         if refresh_devices {
             effects::spawn_device_listing(tx.clone());
+        }
+        // Builds and log streams the user asked for.
+        let (next, queued) = jobs::take_jobs(state);
+        state = next;
+        for job in queued {
+            job_runner.apply(job, &job_env);
         }
         if let Some(prefs) = effects::prefs_to_save(&saved_prefs, &state) {
             save_prefs_quietly(prefs_path.as_deref(), &prefs, &tx);
@@ -133,6 +156,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             }
         }
     };
+    job_runner.cancel_all();
     watcher.abort();
     device_watch.abort();
     result
@@ -152,13 +176,59 @@ fn file_opens(actions: &[Action]) -> Vec<(PathBuf, Option<u32>)> {
 enum Input {
     Terminal(Option<std::io::Result<Event>>),
     Background(Action),
+    Signal,
+}
+
+/// SIGHUP (terminal closed) and SIGTERM (asked to end). Without handlers
+/// either would end the process at once and leave a running build behind.
+struct QuitSignals {
+    hangup: Option<Signal>,
+    terminate: Option<Signal>,
+}
+
+impl QuitSignals {
+    fn install() -> Self {
+        let listen = |kind: SignalKind| match signal(kind) {
+            Ok(signal) => Some(signal),
+            Err(error) => {
+                tracing::warn!(%error, "cannot listen for a quit signal");
+                None
+            }
+        };
+        Self {
+            hangup: listen(SignalKind::hangup()),
+            terminate: listen(SignalKind::terminate()),
+        }
+    }
+
+    /// Completes when one of the signals arrives; never if none can be
+    /// listened for.
+    async fn arrived(&mut self) {
+        async fn next(signal: &mut Option<Signal>) {
+            match signal {
+                Some(signal) => {
+                    signal.recv().await;
+                }
+                None => std::future::pending().await,
+            }
+        }
+        tokio::select! {
+            () = next(&mut self.hangup) => {}
+            () = next(&mut self.terminate) => {}
+        }
+    }
 }
 
 /// Collects everything already queued so a burst of background actions
 /// costs one redraw instead of one per action.
+/// Most background actions handled before drawing again, so a flood of log
+/// lines cannot starve the keyboard.
+const MAX_DRAIN: usize = 512;
+
 fn drain(first: Action, rx: &mut UnboundedReceiver<Action>) -> Vec<Action> {
     std::iter::once(first)
         .chain(std::iter::from_fn(|| rx.try_recv().ok()))
+        .take(MAX_DRAIN)
         .collect()
 }
 
@@ -274,6 +344,21 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_hangup_or_terminate_signal_is_noticed() {
+        for signal in [libc::SIGHUP, libc::SIGTERM] {
+            let mut signals = QuitSignals::install();
+
+            // SAFETY: both signals are being handled by `signals`, so raising
+            // them cannot end the test process.
+            unsafe { libc::raise(signal) };
+
+            tokio::time::timeout(Duration::from_secs(5), signals.arrived())
+                .await
+                .expect("the signal was not noticed");
+        }
+    }
+
     #[test]
     fn drain_collects_queued_actions_in_order() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -287,6 +372,22 @@ mod tests {
             vec![Action::Quit, Action::FocusNext, Action::FocusPrev]
         );
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn drain_stops_at_the_cap_and_leaves_the_rest_queued() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for _ in 0..MAX_DRAIN + 100 {
+            tx.send(Action::FocusNext).unwrap();
+        }
+
+        let first = drain(Action::Quit, &mut rx);
+
+        assert_eq!(first.len(), MAX_DRAIN);
+        assert!(
+            rx.try_recv().is_ok(),
+            "the remainder waits for the next round"
+        );
     }
 
     #[test]

@@ -65,7 +65,7 @@ fn tool_path(sys: &dyn System, name: &str, relative: &str) -> Option<PathBuf> {
         .or_else(|| sys.which(name))
 }
 
-fn adb_path(sys: &dyn System) -> Option<PathBuf> {
+pub fn adb_path(sys: &dyn System) -> Option<PathBuf> {
     tool_path(sys, "adb", "platform-tools/adb")
 }
 

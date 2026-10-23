@@ -79,6 +79,10 @@ Keys so far:
 | `t` | switch the build target between Android and iOS |
 | `d` | focus the Devices panel |
 | `i` | show the environment (SDK and Xcode locations and versions) |
+| `B` | build the app and run it on the chosen running device |
+| `s` | cancel the build |
+| `L` | follow (or stop following) the chosen device's log |
+| `o` | focus the Output panel |
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
@@ -102,6 +106,28 @@ emulator you start elsewhere shows up too.
   the project's `local.properties` is never used to run anything.
 - The chosen target and devices are remembered per project in a private file under the LF-Mide config folder, never
   inside your project.
+
+## Build, run and logs
+
+`B` builds the app and runs it on the chosen device, which must already be running (start it with `b` in the Devices
+panel). Output streams into the Output panel while the build runs, and the status bar shows the current step and Gradle
+task, then how it ended.
+
+- Android: `./gradlew :androidApp:installDebug` (or `:composeApp:`) for the chosen emulator, then the app is started
+  with its `applicationId`.
+- iOS: `xcodebuild` for the chosen simulator, with build products in LF-Mide's own cache folder (not in your project),
+  then `simctl install` and `simctl launch`.
+- When the app is running, its log is followed automatically: `adb logcat` on Android, the simulator's log limited to
+  the app's process on iOS.
+- Compiler errors and warnings are collected in the **Problems** tab. A failed build with errors opens it for you.
+  `Enter` on a problem shows that file at that line in Neovim.
+- The build runs your project's own `gradlew` and Xcode project, so it only starts when you press `B`.
+- Quitting (or closing the terminal window) stops the build and the log streams, force-killing any that ignore the request.
+
+In the Output panel (`o`): `h`/`l` or `[`/`]` change tab, `1`-`5` jump to a tab, `j`/`k` or arrows scroll, `g` goes to
+the oldest line, `G` follows new output again, `c` clears the tab, `F` filters the log by text (`Enter` keeps it, `Esc`
+drops it), `v` shows only louder Logcat lines (Debug, Info, Warn, Error, then all again).
+Each log keeps the newest 20,000 lines.
 
 ## Navigating the project
 
@@ -182,6 +208,7 @@ Workspace layout:
 crates/
 ├── app/              # lf-mide binary: CLI, event loop, keymap, background tasks
 ├── core/             # state, actions, pure reducer, config, project detection, doctor result types
+├── build/            # build, install, launch and log pipelines for Android and iOS
 ├── doctor/           # dependency checks behind `lf-mide doctor`
 ├── editor/           # shows a file in the running Neovim over its RPC socket
 ├── nav/              # project scan, fuzzy finder, ripgrep search

@@ -990,6 +990,7 @@ dependencies = [
  "crossterm",
  "directories",
  "futures 0.3.34",
+ "lf-mide-build",
  "lf-mide-core",
  "lf-mide-doctor",
  "lf-mide-editor",
@@ -1006,6 +1007,17 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "lf-mide-build"
+version = "0.1.0"
+dependencies = [
+ "lf-mide-core",
+ "lf-mide-platform",
+ "lf-mide-system",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

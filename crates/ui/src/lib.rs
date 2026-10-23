@@ -2,6 +2,7 @@
 //! [`AppState`]; nothing in this crate changes state.
 
 mod devices;
+mod output;
 mod search;
 #[cfg(test)]
 mod testing;
@@ -16,11 +17,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph, Tabs};
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 const FILES_WIDTH_PCT: u16 = 20;
 const DEVICES_WIDTH_PCT: u16 = 22;
-const BOTTOM_TABS: [&str; 5] = ["Build", "Logcat", "iOS Log", "Problems", "Git"];
 const HELP_HINT: &str =
     "Tab: focus · e: editor · f: find · /: search · T: terminal · D: doctor · q: quit";
 const PICKER_TITLE: &str = " Terminal · Enter select · Esc cancel ";
@@ -57,7 +57,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         "Neovim runs in a split pane (mode D)",
     );
     devices::render_devices(frame, devices, state);
-    render_bottom(frame, bottom, state);
+    output::render_output(frame, bottom, state);
     render_status(frame, status, state);
     render_doctor(frame, state);
     render_terminal_picker(frame, state);
@@ -274,19 +274,17 @@ fn render_placeholder(frame: &mut Frame, area: Rect, state: &AppState, panel: Pa
     frame.render_widget(body, area);
 }
 
-fn render_bottom(frame: &mut Frame, area: Rect, state: &AppState) {
-    let tabs = Tabs::new(BOTTOM_TABS)
-        .select(0)
-        .highlight_style(Style::new().fg(ACCENT).add_modifier(Modifier::BOLD))
-        .block(panel_block(state, Panel::Bottom, "Output"));
-    frame.render_widget(tabs, area);
-}
-
 fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut spans = vec![Span::styled(
         format!(" {} ", branch_text(state)),
         Style::new().fg(ACCENT),
     )];
+    if let Some((summary, color)) = output::build_summary(state) {
+        spans.push(Span::styled(
+            format!("│ {summary} "),
+            Style::new().fg(color),
+        ));
+    }
     if let Some(message) = &state.status {
         spans.push(Span::styled(
             format!("│ {message} "),
