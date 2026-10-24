@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use lf_mide_core::screen::Screen;
+use lf_mide_core::{EditorMouse, MouseAction, MouseButton};
 use nvim_rs::compat::tokio::Compat;
 use nvim_rs::{Handler, Neovim, UiAttachOptions, Value};
 use tokio::process::{Child, ChildStdin, Command};
@@ -79,6 +80,7 @@ enum Request {
     Paste(String),
     Resize(u16, u16),
     ConfirmQuit,
+    Mouse(EditorMouse),
 }
 
 /// A running embedded Neovim. Dropping it stops the writer; [`terminate`]
@@ -155,6 +157,11 @@ impl Session {
 
     pub fn resize(&self, width: u16, height: u16) -> Result<(), EditorError> {
         self.send(Request::Resize(width, height))
+    }
+
+    /// Sends a mouse event to Neovim, at a cell of its grid.
+    pub fn mouse(&self, mouse: EditorMouse) -> Result<(), EditorError> {
+        self.send(Request::Mouse(mouse))
     }
 
     /// Quits Neovim, asking about unsaved changes in Neovim itself, after
@@ -263,6 +270,11 @@ impl Writer {
             let _ = self.stop.send(());
             return;
         }
+        // Clicks and the wheel reach Neovim only with the mouse on. A failure
+        // only costs the mouse, so it is logged.
+        if let Err(error) = self.nvim.command("set mouse=a").await {
+            tracing::warn!(%error, "cannot turn on the mouse in Neovim");
+        }
         let (servers, lsp_error) = self.set_up_lsp(launch.lsp.as_ref()).await;
         (self.report)(SessionEvent::Ready { servers, lsp_error });
 
@@ -278,6 +290,11 @@ impl Writer {
                     self.nvim
                         .ui_try_resize(i64::from(width), i64::from(height))
                         .await
+                }
+                Request::Mouse(mouse) => {
+                    let (button, action) = nvim_names(mouse.action);
+                    let (row, col) = (i64::from(mouse.row), i64::from(mouse.col));
+                    self.nvim.input_mouse(button, action, "", 0, row, col).await
                 }
                 Request::ConfirmQuit => self.confirm_quit().await,
             };
@@ -392,6 +409,25 @@ impl Handler for RedrawHandler {
     }
 }
 
+/// The button and action names `nvim_input_mouse` takes.
+fn nvim_names(action: MouseAction) -> (&'static str, &'static str) {
+    match action {
+        MouseAction::Press(button) => (button_name(button), "press"),
+        MouseAction::Drag(button) => (button_name(button), "drag"),
+        MouseAction::Release(button) => (button_name(button), "release"),
+        MouseAction::ScrollUp => ("wheel", "up"),
+        MouseAction::ScrollDown => ("wheel", "down"),
+    }
+}
+
+fn button_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "left",
+        MouseButton::Right => "right",
+        MouseButton::Middle => "middle",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +451,28 @@ mod tests {
     #[test]
     fn pasted_line_breaks_become_newlines() {
         assert_eq!(normalize_newlines("a\r\nb\rc\nd"), "a\nb\nc\nd");
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use super::*;
+
+    #[test]
+    fn mouse_events_are_named_the_way_neovim_expects() {
+        assert_eq!(
+            nvim_names(MouseAction::Press(MouseButton::Right)),
+            ("right", "press")
+        );
+        assert_eq!(
+            nvim_names(MouseAction::Drag(MouseButton::Left)),
+            ("left", "drag")
+        );
+        assert_eq!(
+            nvim_names(MouseAction::Release(MouseButton::Middle)),
+            ("middle", "release")
+        );
+        assert_eq!(nvim_names(MouseAction::ScrollUp), ("wheel", "up"));
+        assert_eq!(nvim_names(MouseAction::ScrollDown), ("wheel", "down"));
     }
 }

@@ -19,6 +19,15 @@ pub enum EditorMode {
     Split,
 }
 
+/// Colours of the interface: for a dark or a light terminal background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeKind {
+    #[default]
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalKind {
@@ -121,6 +130,7 @@ pub struct Config {
     /// Set up language servers (completion) in the embedded Neovim.
     pub lsp: bool,
     pub terminal: TerminalKind,
+    pub theme: ThemeKind,
     pub show_blame: bool,
     pub show_perf: bool,
     /// Seconds between performance samples.
@@ -140,6 +150,7 @@ impl Default for Config {
             editor: EditorMode::Embedded,
             lsp: true,
             terminal: TerminalKind::Auto,
+            theme: ThemeKind::Dark,
             show_blame: false,
             show_perf: true,
             perf_interval_secs: 2,
@@ -169,6 +180,7 @@ struct PartialConfig {
     editor: Option<EditorMode>,
     lsp: Option<bool>,
     terminal: Option<TerminalKind>,
+    theme: Option<ThemeKind>,
     show_blame: Option<bool>,
     show_perf: Option<bool>,
     perf_interval_secs: Option<u64>,
@@ -198,6 +210,7 @@ impl Config {
             editor: partial.editor.unwrap_or(self.editor),
             lsp: partial.lsp.unwrap_or(self.lsp),
             terminal: partial.terminal.unwrap_or(self.terminal),
+            theme: partial.theme.unwrap_or(self.theme),
             show_blame: partial.show_blame.unwrap_or(self.show_blame),
             show_perf: partial.show_perf.unwrap_or(self.show_perf),
             perf_interval_secs: partial
@@ -286,6 +299,25 @@ mod tests {
         assert!(merged.show_blame);
         assert_eq!(merged.leader, DEFAULT_LEADER);
         assert_eq!(base, Config::default(), "original must not change");
+    }
+
+    #[test]
+    fn the_theme_is_dark_unless_set_to_light() {
+        let source = Path::new("x.toml");
+
+        assert_eq!(Config::default().theme, ThemeKind::Dark);
+        assert_eq!(
+            Config::default()
+                .merged("theme = \"light\"", source)
+                .unwrap()
+                .theme,
+            ThemeKind::Light
+        );
+        assert!(
+            Config::default()
+                .merged("theme = \"blue\"", source)
+                .is_err()
+        );
     }
 
     #[test]

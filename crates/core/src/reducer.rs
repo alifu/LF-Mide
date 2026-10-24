@@ -32,7 +32,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         Action::EmbeddedStarted => editor_reducer::started(state),
         Action::EditorScreen(screen) => editor_reducer::screen(state, screen),
         // Sent to Neovim by the app; nothing here changes.
-        Action::EditorKeys(_) | Action::EditorPaste(_) => state,
+        Action::EditorKeys(_) | Action::EditorPaste(_) | Action::EditorMouse(_) => state,
         Action::EditorExited => editor_reducer::exited(state),
         Action::EditorQuitCancelled(reason) => editor_reducer::quit_cancelled(state, reason),
         Action::FocusNext => AppState {
@@ -213,6 +213,8 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             files_loading: true,
             ..state
         },
+        Action::TreeSelect(_) if state.tree.is_empty() => state,
+        Action::TreeSelect(row) => select_row(state, row),
         Action::TreeMove(delta) => {
             if state.tree.is_empty() {
                 return state;
@@ -1948,6 +1950,18 @@ mod tests {
         assert_eq!(up_past_top.help_scroll, 0);
         assert_eq!(reopened.help_scroll, 0, "reopening starts at the top");
         assert!(!reduce(open, Action::ToggleHelp).help_open);
+    }
+
+    #[test]
+    fn clicking_a_tree_row_selects_it_and_an_empty_tree_ignores_it() {
+        let selected = reduce(loaded(&["a", "b", "c"]), Action::TreeSelect(2));
+
+        assert_eq!(selected.tree_selected, 2);
+        assert_eq!(
+            reduce(state(), Action::TreeSelect(3)).tree_selected,
+            0,
+            "empty tree"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod git;
 mod git_reducer;
 pub mod layout;
 pub mod logparse;
+pub mod mouse;
 pub mod nav;
 pub mod output;
 mod output_reducer;
@@ -26,7 +27,9 @@ pub mod text;
 pub mod version;
 
 pub use action::Action;
-pub use config::{Config, ConfigError, EditorMode, TerminalKind, set_terminal_in_config};
+pub use config::{
+    Config, ConfigError, EditorMode, TerminalKind, ThemeKind, set_terminal_in_config,
+};
 pub use devices::{
     AndroidSdk, Device, DeviceState, Platform, SdkInfo, ToolInfo, XcodeSdk, display_path,
 };
@@ -39,6 +42,7 @@ pub use git::{
     LineOrigin, MarkKind, blame_text, hunk_lines, marks_from_diff, relative_time,
 };
 pub use git_reducer::MarksKey;
+pub use mouse::{EditorMouse, MouseAction, MouseButton};
 pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
 pub use output::{
     BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LOG_CAPACITY, LogBuffer, LogLevel,

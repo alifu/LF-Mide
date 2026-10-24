@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lf_mide_core::screen::{CursorShape, Screen};
+use lf_mide_core::{EditorMouse, MouseAction, MouseButton};
 use lf_mide_editor::embedded::{Launch, Session, SessionEvent};
 use lf_mide_editor::lsp::LspServers;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -360,4 +361,35 @@ async fn resizing_and_pasting_while_neovim_asks_do_not_block_the_answer() {
         matches!(e, SessionEvent::QuitCancelled { reason: None })
     })
     .await;
+}
+
+#[tokio::test]
+async fn a_click_moves_the_cursor_in_neovim() {
+    if !nvim_available() {
+        return;
+    }
+    let mut nvim = start(40, 10).await;
+    nvim.session.input("iabcdef<Esc>".into()).unwrap();
+    nvim.until_screen("typed", |s| starts_with(s, 0, "abcdef"))
+        .await;
+
+    nvim.session
+        .mouse(EditorMouse {
+            action: MouseAction::Press(MouseButton::Left),
+            row: 0,
+            col: 1,
+        })
+        .unwrap();
+    nvim.session
+        .mouse(EditorMouse {
+            action: MouseAction::Release(MouseButton::Left),
+            row: 0,
+            col: 1,
+        })
+        .unwrap();
+    let screen = nvim
+        .until_screen("cursor after the click", |s| s.cursor == (0, 1))
+        .await;
+
+    assert_eq!(screen.cursor, (0, 1));
 }

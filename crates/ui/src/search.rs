@@ -1,14 +1,13 @@
 //! The fuzzy file finder and the project search, drawn as overlays.
 
+use crate::theme;
 use lf_mide_core::text::visible as printable;
 use lf_mide_core::{AppState, FileMatch, GrepState};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
-
-use crate::{ACCENT, MUTED};
 
 const FINDER_TITLE: &str = " Find file · Enter open · Esc cancel ";
 const GREP_TITLE: &str = " Search · Enter search / open · Esc cancel ";
@@ -45,7 +44,7 @@ pub(crate) fn highlighted_line(
     indices: &[u32],
     base: Style,
 ) -> Line<'static> {
-    let hit_style = base.add_modifier(Modifier::BOLD).fg(Color::Yellow);
+    let hit_style = base.add_modifier(Modifier::BOLD).fg(theme::current().warn);
     let mut spans = vec![Span::styled(prefix.to_string(), base)];
     let mut run = String::new();
     let mut run_is_hit = false;
@@ -79,7 +78,7 @@ fn draw_frame(frame: &mut Frame, title: &str) -> Rect {
     let popup = centered(area, width, height);
     let block = Block::bordered()
         .title(title.to_string())
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -88,7 +87,7 @@ fn draw_frame(frame: &mut Frame, title: &str) -> Rect {
 
 /// `symbol query▏` on one line.
 fn prompt_line(symbol: &str, query: &str) -> Line<'static> {
-    let accent = Style::new().fg(ACCENT);
+    let accent = Style::new().fg(theme::current().accent);
     Line::from(vec![
         Span::styled(format!("{symbol} "), accent),
         Span::raw(query.to_string()),
@@ -126,7 +125,7 @@ pub(crate) fn render_finder(frame: &mut Frame, state: &AppState) {
         (n, false) => format!("{n} matches"),
     };
     frame.render_widget(
-        Paragraph::new(Line::styled(note, Style::new().fg(MUTED))),
+        Paragraph::new(Line::styled(note, Style::new().fg(theme::current().muted))),
         status,
     );
 
@@ -145,7 +144,7 @@ pub(crate) fn render_finder(frame: &mut Frame, state: &AppState) {
 
 fn finder_row(selected: bool, found: &FileMatch) -> Line<'static> {
     let base = if selected {
-        Style::new().fg(ACCENT)
+        Style::new().fg(theme::current().accent)
     } else {
         Style::new()
     };
@@ -175,7 +174,9 @@ pub(crate) fn render_grep(frame: &mut Frame, state: &AppState) {
         .map(|(index, hit)| {
             let selected = index == grep.selected;
             let style = if selected {
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::new()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::new()
             };
@@ -193,12 +194,15 @@ pub(crate) fn render_grep(frame: &mut Frame, state: &AppState) {
 }
 
 fn grep_status(grep: &GrepState) -> Line<'static> {
-    let muted = Style::new().fg(MUTED);
+    let muted = Style::new().fg(theme::current().muted);
     if grep.running {
         return Line::styled("Searching…", muted);
     }
     if let Some(error) = &grep.error {
-        return Line::styled(printable(error).into_owned(), Style::new().fg(Color::Red));
+        return Line::styled(
+            printable(error).into_owned(),
+            Style::new().fg(theme::current().error),
+        );
     }
     match (grep.searched.is_some(), grep.hits.len()) {
         (false, _) => Line::styled("Enter to search", muted),

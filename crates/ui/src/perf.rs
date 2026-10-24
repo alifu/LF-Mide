@@ -1,5 +1,6 @@
 //! The performance indicator in the status bar and the Perf panel.
 
+use crate::theme;
 use lf_mide_core::perf::SwapLimits;
 use lf_mide_core::{
     AppState, Health, PerfSample, Platform, Pressure, ProcessKind, ProcessStat, Trend, format_cpu,
@@ -14,7 +15,6 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use lf_mide_core::text::visible as printable;
 
 use crate::search::{centered, window_top};
-use crate::{ACCENT, MUTED};
 
 const TITLE: &str = " Perf · j/k move · x stop · p/Esc close ";
 const PANEL_WIDTH: u16 = 100;
@@ -29,9 +29,9 @@ fn limits(state: &AppState) -> SwapLimits {
 
 fn health_color(health: Health) -> Color {
     match health {
-        Health::Good => Color::Green,
-        Health::Warn => Color::Yellow,
-        Health::Critical => Color::Red,
+        Health::Good => theme::current().ok,
+        Health::Warn => theme::current().warn,
+        Health::Critical => theme::current().error,
     }
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn indicator(state: &AppState) -> Option<(String, Color)> {
         return None;
     }
     let Some(sample) = &state.perf else {
-        return Some(("RAM …".to_string(), MUTED));
+        return Some(("RAM …".to_string(), theme::current().muted));
     };
     let system = &sample.system;
     let text = format!(
@@ -76,7 +76,7 @@ pub(crate) fn render_perf(frame: &mut Frame, state: &AppState) {
     let popup = centered(area, width, wanted);
     let block = Block::bordered()
         .title(TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -87,7 +87,7 @@ fn panel_lines(state: &AppState, inner: Rect) -> Vec<Line<'static>> {
     let Some(sample) = &state.perf else {
         return vec![Line::from(Span::styled(
             "Waiting for the first sample…",
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ))];
     };
     let mut lines = vec![system_line(state, sample), Line::raw("")];
@@ -96,7 +96,7 @@ fn panel_lines(state: &AppState, inner: Rect) -> Vec<Line<'static>> {
             "  {:<NAME_WIDTH$} {:>7} {:>8} {:>7}",
             "Process", "PID", "Memory", "CPU"
         ),
-        Style::new().fg(MUTED),
+        Style::new().fg(theme::current().muted),
     )));
     let visible = usize::from(inner.height).saturating_sub(FIXED_ROWS).max(1);
     let footer = footer_line(state, sample);
@@ -113,7 +113,7 @@ fn panel_lines(state: &AppState, inner: Rect) -> Vec<Line<'static>> {
     if sample.processes.is_empty() {
         lines.push(Line::from(Span::styled(
             "  Nothing to watch is running",
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         )));
     }
     lines.push(footer);
@@ -135,11 +135,13 @@ fn footer_line(state: &AppState, sample: &PerfSample) -> Line<'static> {
                 "Press x again to stop {}. Any other key cancels.",
                 lf_mide_core::perf_reducer::describe(process)
             ),
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(theme::current().warn)
+                .add_modifier(Modifier::BOLD),
         )),
         None => Line::from(Span::styled(
             "x stops the highlighted helper (asks twice)",
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         )),
     }
 }
@@ -148,9 +150,9 @@ fn system_line(state: &AppState, sample: &PerfSample) -> Line<'static> {
     let system = &sample.system;
     let health = system.health(limits(state));
     let pressure_color = match system.pressure {
-        Pressure::Normal => Color::Green,
-        Pressure::Warn => Color::Yellow,
-        Pressure::Critical => Color::Red,
+        Pressure::Normal => theme::current().ok,
+        Pressure::Warn => theme::current().warn,
+        Pressure::Critical => theme::current().error,
     };
     Line::from(vec![
         Span::raw(format!(
@@ -212,7 +214,7 @@ fn process_line(state: &AppState, process: &ProcessStat, selected: bool) -> Line
         .as_ref()
         .is_some_and(|asked| asked.is_for(process));
     Line::from(vec![
-        Span::styled(pointer, Style::new().fg(ACCENT)),
+        Span::styled(pointer, Style::new().fg(theme::current().accent)),
         Span::styled(
             format!(
                 "{name:<NAME_WIDTH$} {:>7} {:>8} {:>7}",
@@ -224,7 +226,11 @@ fn process_line(state: &AppState, process: &ProcessStat, selected: bool) -> Line
         ),
         Span::styled(
             note,
-            Style::new().fg(if confirming { Color::Yellow } else { MUTED }),
+            Style::new().fg(if confirming {
+                theme::current().warn
+            } else {
+                theme::current().muted
+            }),
         ),
     ])
 }
@@ -285,18 +291,21 @@ mod tests {
 
     #[test]
     fn before_the_first_sample_the_indicator_says_so() {
-        assert_eq!(indicator(&state()), Some(("RAM …".to_string(), MUTED)));
+        assert_eq!(
+            indicator(&state()),
+            Some(("RAM …".to_string(), theme::current().muted))
+        );
     }
 
     #[test]
     fn the_indicator_colour_follows_pressure_and_swap() {
         let colour = |swap, pressure| indicator(&sampled(swap, pressure, vec![])).unwrap().1;
 
-        assert_eq!(colour(GIB, Pressure::Normal), Color::Green);
-        assert_eq!(colour(GIB, Pressure::Warn), Color::Yellow);
-        assert_eq!(colour(2 * GIB, Pressure::Normal), Color::Yellow);
-        assert_eq!(colour(GIB, Pressure::Critical), Color::Red);
-        assert_eq!(colour(5 * GIB, Pressure::Normal), Color::Red);
+        assert_eq!(colour(GIB, Pressure::Normal), theme::current().ok);
+        assert_eq!(colour(GIB, Pressure::Warn), theme::current().warn);
+        assert_eq!(colour(2 * GIB, Pressure::Normal), theme::current().warn);
+        assert_eq!(colour(GIB, Pressure::Critical), theme::current().error);
+        assert_eq!(colour(5 * GIB, Pressure::Normal), theme::current().error);
     }
 
     #[test]

@@ -66,6 +66,9 @@ pub enum Action {
     EditorKeys(String),
     /// Pasted text for that Neovim (the app sends it).
     EditorPaste(String),
+    /// A mouse press, drag, release or scroll over the editor panel (the
+    /// app sends it to Neovim).
+    EditorMouse(crate::mouse::EditorMouse),
     /// That Neovim has ended.
     EditorExited,
     /// Neovim is still running after being asked to quit: the user said
@@ -79,6 +82,8 @@ pub enum Action {
     RefreshFiles,
     /// Move the file-tree selection (negative = up).
     TreeMove(i16),
+    /// Select a file-tree row by its index (a click).
+    TreeSelect(usize),
     /// Open or close the selected directory.
     TreeToggle,
     /// Open the selected directory, or step into an already open one.

@@ -242,6 +242,8 @@ swap_critical_mb = 4096    # and red
 
 ## Navigating the project
 
+The mouse works too: click a panel to focus it, click a file to select it and click it again to open it (a second click on a folder opens or closes it), and scroll the wheel over the panel you want to move. Clicks and the wheel in the editor panel go to Neovim. Because the app takes the mouse, your terminal's own text selection needs its modifier key: hold Option in iTerm2 while you drag.
+
 The file tree and the finder list every regular file under the project root, honoring `.gitignore` (even without a
 `.git` folder) and skipping `.git`, `.gradle`, `.kotlin`, `.idea`, `build`, `DerivedData`, `node_modules` and `Pods`.
 Symbolic links are never followed or listed. Up to 200,000 files are listed. The finder re-ranks as you type (about
@@ -342,6 +344,7 @@ leader = "C-Space"     # leaves the editor for the panels (Neovim notation: "C-S
 editor = "embedded"    # embedded (in the editor panel) | split (a pane next to LF-Mide)
 lsp = true             # set up kmp-lsp / sourcekit-lsp completion in the embedded Neovim
 terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux (for split mode)
+theme = "dark"         # dark | light (the colours for a light terminal background)
 show_blame = false
 show_perf = true
 ```

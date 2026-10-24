@@ -10,6 +10,7 @@ mod perf;
 mod search;
 #[cfg(test)]
 mod testing;
+pub mod theme;
 mod tree;
 
 use lf_mide_core::layout::{BOTTOM_ROWS, HEADER_ROWS, MIN_BODY_ROWS, STATUS_ROWS};
@@ -32,10 +33,6 @@ const PICKER_TITLE: &str = " Terminal · Enter select · Esc cancel ";
 const PICKER_WIDTH: u16 = 56;
 const DOCTOR_TITLE: &str = " Doctor · Esc close · r re-run · j/k scroll ";
 const DOCTOR_MAX_WIDTH: u16 = 110;
-
-const ACCENT: Color = Color::Cyan;
-const MUTED: Color = Color::DarkGray;
-const BAR_BG: Color = Color::Rgb(40, 44, 52);
 
 /// Where each part of the main screen goes.
 struct Areas {
@@ -69,6 +66,45 @@ fn areas(screen: Rect) -> Areas {
         bottom,
         status,
     }
+}
+
+/// The panel under a terminal cell, if the cell is inside one.
+pub fn panel_at(screen: Rect, column: u16, row: u16) -> Option<Panel> {
+    let cell = Rect::new(column, row, 1, 1);
+    let Areas {
+        files,
+        editor,
+        devices,
+        bottom,
+        ..
+    } = areas(screen);
+    [
+        (Panel::Files, files),
+        (Panel::Editor, editor),
+        (Panel::Devices, devices),
+        (Panel::Bottom, bottom),
+    ]
+    .into_iter()
+    .find(|(_, area)| area.intersects(cell))
+    .map(|(panel, _)| panel)
+}
+
+/// The inside of a panel's border, where its rows and text are drawn.
+pub fn panel_content(screen: Rect, panel: Panel) -> Rect {
+    let Areas {
+        files,
+        editor,
+        devices,
+        bottom,
+        ..
+    } = areas(screen);
+    let area = match panel {
+        Panel::Files => files,
+        Panel::Editor => editor,
+        Panel::Devices => devices,
+        Panel::Bottom => bottom,
+    };
+    Block::bordered().inner(area)
 }
 
 /// The part of the editor panel Neovim draws in, on a screen of this size:
@@ -134,7 +170,7 @@ fn render_terminal_picker(frame: &mut Frame, state: &AppState) {
 
     let block = Block::bordered()
         .title(PICKER_TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -161,7 +197,9 @@ fn render_terminal_picker(frame: &mut Frame, state: &AppState) {
                     .map_or(String::new(), |n| format!(" ({n})")),
             };
             let style = if index == highlight {
-                Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+                Style::new()
+                    .fg(theme::current().accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::new()
             };
@@ -190,14 +228,17 @@ fn render_doctor(frame: &mut Frame, state: &AppState) {
 
     let block = Block::bordered()
         .title(DOCTOR_TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
 
     let body = match &state.doctor {
         DoctorPanel::Closed => return,
-        DoctorPanel::Running => vec![Line::styled("Checking your setup…", Style::new().fg(MUTED))],
+        DoctorPanel::Running => vec![Line::styled(
+            "Checking your setup…",
+            Style::new().fg(theme::current().muted),
+        )],
         DoctorPanel::Ready(report) => {
             let lines = report.lines();
             let visible = usize::from(inner.height);
@@ -227,16 +268,22 @@ fn report_line(line: &ReportLine) -> Line<'static> {
             Span::styled(status.symbol(), Style::new().fg(status_color(status))),
             Span::raw(format!(" {text}")),
         ]),
-        LineKind::Path => Line::styled(format!("     {text}"), Style::new().fg(MUTED)),
-        LineKind::Hint => Line::styled(format!("     → {text}"), Style::new().fg(Color::Yellow)),
+        LineKind::Path => Line::styled(
+            format!("     {text}"),
+            Style::new().fg(theme::current().muted),
+        ),
+        LineKind::Hint => Line::styled(
+            format!("     → {text}"),
+            Style::new().fg(theme::current().warn),
+        ),
     }
 }
 
 fn status_color(status: Status) -> Color {
     match status {
-        Status::Ok => Color::Green,
-        Status::Warn => Color::Yellow,
-        Status::Missing => Color::Red,
+        Status::Ok => theme::current().ok,
+        Status::Warn => theme::current().warn,
+        Status::Missing => theme::current().error,
     }
 }
 
@@ -262,9 +309,15 @@ pub fn branch_label(branch: Option<&BranchInfo>) -> String {
 fn panel_block(state: &AppState, panel: Panel, title: &str) -> Block<'static> {
     let focused = state.focus == panel;
     let (title, style) = if focused {
-        (format!(" ▶ {title} "), Style::new().fg(ACCENT))
+        (
+            format!(" ▶ {title} "),
+            Style::new().fg(theme::current().accent),
+        )
     } else {
-        (format!(" {title} "), Style::new().fg(MUTED))
+        (
+            format!(" {title} "),
+            Style::new().fg(theme::current().muted),
+        )
     };
     Block::bordered().title(title).border_style(style)
 }
@@ -274,8 +327,8 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(
             " LF-Mide ",
             Style::new()
-                .fg(Color::Black)
-                .bg(ACCENT)
+                .fg(theme::current().on_accent)
+                .bg(theme::current().accent)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
@@ -285,27 +338,33 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
         Span::styled(
             format!(" ({})", state.project.layout.label()),
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ),
         Span::styled(
             format!("  terminal: {}", terminal_summary(state)),
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ),
         Span::styled(
             format!("  target: {}", devices::target_summary(state)),
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ),
     ]);
-    frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::new().bg(theme::current().bar_bg)),
+        area,
+    );
 }
 
 fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut spans = vec![Span::styled(
         format!(" {} ", branch_text(state)),
-        Style::new().fg(ACCENT),
+        Style::new().fg(theme::current().accent),
     )];
     if state.blame_on {
-        spans.push(Span::styled("│ blame ", Style::new().fg(ACCENT)));
+        spans.push(Span::styled(
+            "│ blame ",
+            Style::new().fg(theme::current().accent),
+        ));
     }
     if let Some((text, color)) = perf::indicator(state) {
         spans.push(Span::styled(format!("│ {text} "), Style::new().fg(color)));
@@ -319,15 +378,15 @@ fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
     if let Some(message) = &state.status {
         spans.push(Span::styled(
             format!("│ {} ", printable(message)),
-            Style::new().fg(Color::Yellow),
+            Style::new().fg(theme::current().warn),
         ));
     }
     spans.push(Span::styled(
         format!("│ {HELP_HINT}"),
-        Style::new().fg(MUTED),
+        Style::new().fg(theme::current().muted),
     ));
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::new().bg(BAR_BG)),
+        Paragraph::new(Line::from(spans)).style(Style::new().bg(theme::current().bar_bg)),
         area,
     );
 }

@@ -19,7 +19,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::embedded_editor::EmbeddedEditor;
 use crate::{
-    branch_watch, editor, effects, git_effects, jobs, keymap, paths, perf_effects, settings,
+    branch_watch, editor, effects, git_effects, jobs, keymap, mouse, paths, perf_effects, settings,
 };
 
 /// The first AppleScript call may wait for the user to allow access.
@@ -92,6 +92,9 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
                 vec![Action::EditorPaste(text)]
             }
             Input::Terminal(Some(Ok(Event::Paste(text)))) => keymap::paste_actions(&state, &text),
+            Input::Terminal(Some(Ok(Event::Mouse(mouse)))) => {
+                mouse::actions_for(&state, mouse, screen)
+            }
             Input::Terminal(Some(Ok(_))) => Vec::new(),
             Input::Terminal(Some(Err(err))) => break Err(err.into()),
             Input::Terminal(None) => vec![Action::QuitNow],

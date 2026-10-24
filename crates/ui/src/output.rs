@@ -1,6 +1,7 @@
 //! The Output panel: build log, device logs, problems, and the build
 //! summary shown in the status bar.
 
+use crate::theme;
 use std::path::Path;
 
 use lf_mide_core::logparse::{BuildLine, logcat_level, parse_build_line};
@@ -15,7 +16,7 @@ use ratatui::widgets::Paragraph;
 
 use lf_mide_core::text::visible as printable;
 
-use crate::{ACCENT, MUTED, panel_block};
+use crate::panel_block;
 
 /// Rows of the panel used by the tab line.
 const TAB_ROWS: u16 = 1;
@@ -36,11 +37,11 @@ pub(crate) fn build_summary(state: &AppState) -> Option<(String, Color)> {
             if let Some(task) = &build.task {
                 text.push_str(&format!(" · {task}"));
             }
-            Some((text, Color::Cyan))
+            Some((text, theme::current().info))
         }
         BuildPhase::Succeeded => Some((
             format!("✓ built and running · {:.1}s", seconds(build.millis)),
-            Color::Green,
+            theme::current().ok,
         )),
         BuildPhase::Failed => {
             let errors = match build.errors {
@@ -48,9 +49,9 @@ pub(crate) fn build_summary(state: &AppState) -> Option<(String, Color)> {
                 1 => " · 1 error".to_string(),
                 n => format!(" · {n} errors"),
             };
-            Some((format!("✗ build failed{errors}"), Color::Red))
+            Some((format!("✗ build failed{errors}"), theme::current().error))
         }
-        BuildPhase::Cancelled => Some(("■ build cancelled".to_string(), Color::Yellow)),
+        BuildPhase::Cancelled => Some(("■ build cancelled".to_string(), theme::current().warn)),
     }
 }
 
@@ -84,26 +85,31 @@ fn tab_line(state: &AppState) -> Line<'static> {
     let mut spans = Vec::new();
     for tab in OutputTab::ALL {
         if !spans.is_empty() {
-            spans.push(Span::styled(SEPARATOR, Style::new().fg(MUTED)));
+            spans.push(Span::styled(
+                SEPARATOR,
+                Style::new().fg(theme::current().muted),
+            ));
         }
         let style = if tab == state.output_tab {
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+            Style::new()
+                .fg(theme::current().accent)
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::new().fg(MUTED)
+            Style::new().fg(theme::current().muted)
         };
         spans.push(Span::styled(tab_label(state, tab), style));
     }
     if let Some(text) = filter_text(state) {
         spans.push(Span::styled(
             format!("   {text}"),
-            Style::new().fg(Color::Yellow),
+            Style::new().fg(theme::current().warn),
         ));
     }
     let scrolled = state.output_scroll[state.output_tab.index()];
     if scrolled > 0 {
         spans.push(Span::styled(
             format!("   ↑ {scrolled} older · G follows"),
-            Style::new().fg(Color::Yellow),
+            Style::new().fg(theme::current().warn),
         ));
     }
     Line::from(spans)
@@ -145,7 +151,10 @@ fn tab_label(state: &AppState, tab: OutputTab) -> String {
 }
 
 fn muted(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), Style::new().fg(MUTED)))
+    Line::from(Span::styled(
+        text.to_string(),
+        Style::new().fg(theme::current().muted),
+    ))
 }
 
 fn empty_hint(tab: OutputTab) -> &'static str {
@@ -225,30 +234,30 @@ fn styled_log_line(tab: OutputTab, line: &str) -> Line<'static> {
 
 fn build_color(line: &str) -> Option<Color> {
     if line.starts_with("$ ") || line.starts_with("— ") {
-        return Some(ACCENT);
+        return Some(theme::current().accent);
     }
     match parse_build_line(line) {
         BuildLine::Problem(Problem {
             severity: Severity::Error,
             ..
-        }) => Some(Color::Red),
-        BuildLine::Problem(_) => Some(Color::Yellow),
-        BuildLine::Task(_) => Some(MUTED),
-        BuildLine::Finished { succeeded: true } => Some(Color::Green),
-        BuildLine::Finished { succeeded: false } => Some(Color::Red),
+        }) => Some(theme::current().error),
+        BuildLine::Problem(_) => Some(theme::current().warn),
+        BuildLine::Task(_) => Some(theme::current().muted),
+        BuildLine::Finished { succeeded: true } => Some(theme::current().ok),
+        BuildLine::Finished { succeeded: false } => Some(theme::current().error),
         BuildLine::Other => None,
     }
 }
 
 fn logcat_color(line: &str) -> Option<Color> {
     if line.starts_with("— ") {
-        return Some(ACCENT);
+        return Some(theme::current().accent);
     }
     match logcat_level(line)? {
-        LogLevel::Fatal | LogLevel::Error => Some(Color::Red),
-        LogLevel::Warn => Some(Color::Yellow),
-        LogLevel::Info => Some(Color::Green),
-        LogLevel::Debug | LogLevel::Verbose => Some(MUTED),
+        LogLevel::Fatal | LogLevel::Error => Some(theme::current().error),
+        LogLevel::Warn => Some(theme::current().warn),
+        LogLevel::Info => Some(theme::current().ok),
+        LogLevel::Debug | LogLevel::Verbose => Some(theme::current().muted),
     }
 }
 
@@ -276,8 +285,8 @@ fn problem_lines(state: &AppState, rows: usize, width: usize) -> Vec<Line<'stati
 
 fn problem_line(root: &Path, problem: &Problem, selected: bool, width: usize) -> Line<'static> {
     let (glyph, color) = match problem.severity {
-        Severity::Error => ("✗", Color::Red),
-        Severity::Warning => ("!", Color::Yellow),
+        Severity::Error => ("✗", theme::current().error),
+        Severity::Warning => ("!", theme::current().warn),
     };
     let pointer = if selected { "▶" } else { " " };
     let place = location_text(root, problem);
@@ -289,9 +298,12 @@ fn problem_line(root: &Path, problem: &Problem, selected: bool, width: usize) ->
         style = style.add_modifier(Modifier::BOLD);
     }
     Line::from(vec![
-        Span::styled(format!("{pointer} "), Style::new().fg(ACCENT)),
+        Span::styled(
+            format!("{pointer} "),
+            Style::new().fg(theme::current().accent),
+        ),
         Span::styled(glyph, Style::new().fg(color)),
-        Span::styled(format!(" {place}"), Style::new().fg(MUTED)),
+        Span::styled(format!(" {place}"), Style::new().fg(theme::current().muted)),
         Span::styled(format!("  {message}"), style),
     ])
 }
@@ -406,8 +418,8 @@ mod tests {
             buf[(x, y)].fg
         };
 
-        assert_eq!(color_of("e: file"), Color::Red);
-        assert_eq!(color_of("> Task"), MUTED);
+        assert_eq!(color_of("e: file"), theme::current().error);
+        assert_eq!(color_of("> Task"), theme::current().muted);
         assert_eq!(color_of("plain"), Color::Reset);
     }
 
@@ -493,8 +505,8 @@ mod tests {
             buf[(x, y)].fg
         };
 
-        assert_eq!(at("crashed"), Color::Red);
-        assert_eq!(at("chatter"), MUTED);
+        assert_eq!(at("crashed"), theme::current().error);
+        assert_eq!(at("chatter"), theme::current().muted);
     }
 
     #[test]

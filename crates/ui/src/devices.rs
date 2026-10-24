@@ -1,6 +1,7 @@
 //! The Devices panel (target, SDK facts, emulators/simulators) and the
 //! environment overlay.
 
+use crate::theme;
 use lf_mide_core::layout::DEVICE_PANEL_HEADER_ROWS;
 use lf_mide_core::text::visible as printable;
 use std::path::Path;
@@ -8,12 +9,12 @@ use std::path::Path;
 use lf_mide_core::{AppState, Device, DeviceState, Panel, Platform, ToolInfo, display_path};
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
+use crate::panel_block;
 use crate::search::centered;
-use crate::{ACCENT, MUTED, panel_block};
 
 const DETAIL_GAP: &str = "  ";
 const INFO_TITLE: &str = " Environment · Esc close ";
@@ -46,8 +47,8 @@ fn app_path(developer_dir: &Path) -> &Path {
 
 /// The two SDK lines at the top of the panel for the current target.
 fn sdk_lines(state: &AppState) -> [Line<'static>; 2] {
-    let muted = Style::new().fg(MUTED);
-    let problem = Style::new().fg(Color::Red);
+    let muted = Style::new().fg(theme::current().muted);
+    let problem = Style::new().fg(theme::current().error);
     if !state.sdk_loaded {
         return [Line::styled("Checking tools…", muted), Line::raw("")];
     }
@@ -92,10 +93,10 @@ fn sdk_lines(state: &AppState) -> [Line<'static>; 2] {
 
 fn state_marker(device_state: DeviceState) -> Span<'static> {
     match device_state {
-        DeviceState::Running => Span::styled("●", Style::new().fg(Color::Green)),
-        DeviceState::Starting => Span::styled("◐", Style::new().fg(Color::Yellow)),
-        DeviceState::Stopping => Span::styled("◑", Style::new().fg(Color::Yellow)),
-        DeviceState::Stopped => Span::styled("○", Style::new().fg(MUTED)),
+        DeviceState::Running => Span::styled("●", Style::new().fg(theme::current().ok)),
+        DeviceState::Starting => Span::styled("◐", Style::new().fg(theme::current().warn)),
+        DeviceState::Stopping => Span::styled("◑", Style::new().fg(theme::current().warn)),
+        DeviceState::Stopped => Span::styled("○", Style::new().fg(theme::current().muted)),
     }
 }
 
@@ -111,12 +112,17 @@ fn fit_detail(detail: &str, room: usize) -> Option<&str> {
 
 fn device_row(device: &Device, selected: bool, width: usize) -> Line<'static> {
     let name_style = if selected {
-        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(theme::current().accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::new()
     };
     let mut spans = vec![
-        Span::styled(if selected { "▶" } else { " " }, Style::new().fg(ACCENT)),
+        Span::styled(
+            if selected { "▶" } else { " " },
+            Style::new().fg(theme::current().accent),
+        ),
         state_marker(device.state),
         Span::styled(format!(" {}", printable(&device.name)), name_style),
     ];
@@ -126,7 +132,7 @@ fn device_row(device: &Device, selected: bool, width: usize) -> Line<'static> {
     if let Some(detail) = fit_detail(&device.detail, width.saturating_sub(used)) {
         spans.push(Span::styled(
             format!("{DETAIL_GAP}{detail}"),
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ));
     }
     Line::from(spans)
@@ -137,7 +143,7 @@ pub(crate) fn render_devices(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let muted = Style::new().fg(MUTED);
+    let muted = Style::new().fg(theme::current().muted);
     let chip = |platform: Platform| {
         let label = format!(" {} ", platform.label());
         if platform == state.target {
@@ -156,7 +162,7 @@ pub(crate) fn render_devices(frame: &mut Frame, area: Rect, state: &AppState) {
     ]);
     let [first, second] = sdk_lines(state);
     let problem = match state.device_errors.get(&state.target) {
-        Some(message) => Line::styled(message.clone(), Style::new().fg(Color::Red)),
+        Some(message) => Line::styled(message.clone(), Style::new().fg(theme::current().error)),
         None => Line::raw(""),
     };
     debug_assert_eq!(DEVICE_PANEL_HEADER_ROWS, 4);
@@ -191,7 +197,8 @@ fn info_lines(state: &AppState) -> Vec<Line<'static>> {
     let heading =
         |text: &str| Line::styled(text.to_string(), Style::new().add_modifier(Modifier::BOLD));
     let row = |label: &str, value: String| Line::raw(format!("  {label:<10} {value}"));
-    let muted = |text: &str| Line::styled(format!("  {text}"), Style::new().fg(MUTED));
+    let muted =
+        |text: &str| Line::styled(format!("  {text}"), Style::new().fg(theme::current().muted));
     if !state.sdk_loaded {
         return vec![muted("Checking tools…")];
     }
@@ -266,7 +273,7 @@ pub(crate) fn render_info(frame: &mut Frame, state: &AppState) {
     let popup = centered(area, width, height);
     let block = Block::bordered()
         .title(INFO_TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);

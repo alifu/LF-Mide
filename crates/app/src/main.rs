@@ -11,6 +11,7 @@ mod event_loop;
 mod git_effects;
 mod jobs;
 mod keymap;
+mod mouse;
 mod paths;
 mod perf_effects;
 mod settings;
@@ -62,12 +63,13 @@ async fn main() -> Result<()> {
             config.leader
         );
     }
+    lf_mide_ui::theme::use_theme(config.theme);
     let log_guard = init_logging();
     tracing::info!(root = %project.root.display(), "starting");
 
     let terminal = ratatui::try_init().wrap_err("cannot set up the terminal")?;
     // Pastes arrive as one event, so they can go to Neovim as one change.
-    set_bracketed_paste(true);
+    set_input_modes(true);
     exit_on_panic();
     let mut state = AppState::new(project, config);
     if let Some(socket) = attached_socket(cli.nvim_socket) {
@@ -75,7 +77,7 @@ async fn main() -> Result<()> {
         state.status = Some("Attached to your Neovim".to_string());
     }
     let result = event_loop::run(terminal, state).await;
-    set_bracketed_paste(false);
+    set_input_modes(false);
     ratatui::restore();
     drop(log_guard);
     // Returning from `main` would wait for device listings still running on
@@ -87,17 +89,23 @@ async fn main() -> Result<()> {
     result
 }
 
-/// Turns bracketed paste on or off. A terminal without it just types the
-/// pasted text, so a failure is only logged.
-fn set_bracketed_paste(on: bool) {
-    use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+/// Turns bracketed paste and mouse reporting on or off. A terminal without
+/// them just ignores the request, so a failure is only logged.
+fn set_input_modes(on: bool) {
+    use crossterm::event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    };
     let outcome = if on {
-        crossterm::execute!(std::io::stdout(), EnableBracketedPaste)
+        crossterm::execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)
     } else {
-        crossterm::execute!(std::io::stdout(), DisableBracketedPaste)
+        crossterm::execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture
+        )
     };
     if let Err(error) = outcome {
-        tracing::debug!(%error, "cannot change bracketed paste");
+        tracing::debug!(%error, "cannot change the input modes");
     }
 }
 
@@ -123,7 +131,7 @@ fn exit_on_panic() {
             tracing::error!(%info, "a doctor check panicked");
             return;
         }
-        set_bracketed_paste(false);
+        set_input_modes(false);
         restore_and_report(info);
         std::process::exit(PANIC_EXIT_CODE);
     }));

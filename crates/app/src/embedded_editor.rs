@@ -93,6 +93,7 @@ impl EmbeddedEditor {
             let sent = match action {
                 Action::EditorKeys(keys) => session.input(keys.clone()),
                 Action::EditorPaste(text) => session.paste(text.clone()),
+                Action::EditorMouse(mouse) => session.mouse(*mouse),
                 _ => Ok(()),
             };
             if let Err(error) = sent {

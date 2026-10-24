@@ -1,5 +1,6 @@
 //! The help overlay: the keys of the panels and a short Vim cheat sheet.
 
+use crate::theme;
 use lf_mide_core::AppState;
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
@@ -7,7 +8,6 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
 
 use crate::search::centered;
-use crate::{ACCENT, MUTED};
 
 const TITLE: &str = " Help · j/k scroll · ? or Esc close ";
 const WIDTH: u16 = 76;
@@ -18,7 +18,8 @@ fn lines() -> Vec<Line<'static>> {
     let heading =
         |text: &str| Line::styled(text.to_string(), Style::new().add_modifier(Modifier::BOLD));
     let key = |keys: &str, what: &str| Line::raw(format!("  {keys:<KEY_COLUMN$} {what}"));
-    let note = |text: &str| Line::styled(format!("  {text}"), Style::new().fg(MUTED));
+    let note =
+        |text: &str| Line::styled(format!("  {text}"), Style::new().fg(theme::current().muted));
     vec![
         heading("Panels"),
         key("Tab / S-Tab", "move focus between panels"),
@@ -38,6 +39,10 @@ fn lines() -> Vec<Line<'static>> {
             "performance  ·  its indicator  ·  doctor  ·  environment",
         ),
         key("T  R", "choose the terminal  ·  reload the file tree"),
+        key(
+            "mouse",
+            "click to focus or pick, wheel to scroll (Option-drag selects text)",
+        ),
         key("q", "quit (Neovim asks first about unsaved changes)"),
         Line::raw(""),
         heading("Vim basics (inside the editor every key goes to Neovim)"),
@@ -79,7 +84,7 @@ pub(crate) fn render_help(frame: &mut Frame, state: &AppState) {
     let popup = centered(area, WIDTH, height);
     let block = Block::bordered()
         .title(TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     let last_top = lines.len().saturating_sub(usize::from(inner.height));
     let top = u16::try_from(usize::from(state.help_scroll).min(last_top)).unwrap_or(u16::MAX);

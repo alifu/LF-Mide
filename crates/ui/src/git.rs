@@ -1,5 +1,6 @@
 //! The Git tab, the diff overlay and the base picker.
 
+use crate::theme;
 use lf_mide_core::diff_view::{DiffContent, DiffView, SideRow, hunk_header, side_rows};
 use lf_mide_core::layout::diff_viewport_rows;
 use lf_mide_core::{AppState, ChangeKind, DiffLine, FileChange, FileDiff, LineOrigin};
@@ -12,7 +13,6 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use lf_mide_core::text::visible as printable;
 
 use crate::search::{centered, window_top};
-use crate::{ACCENT, MUTED};
 
 const NUMBER_WIDTH: usize = 5;
 const HINT: &str = "j/k scroll · n/N change · s layout · b base · Enter open in editor · Esc close";
@@ -23,12 +23,12 @@ const MARGIN_Y: u16 = 1;
 
 fn kind_color(kind: ChangeKind) -> Color {
     match kind {
-        ChangeKind::Modified => Color::Yellow,
-        ChangeKind::Added => Color::Green,
-        ChangeKind::Deleted => Color::Red,
-        ChangeKind::Renamed => Color::Cyan,
-        ChangeKind::Untracked => MUTED,
-        ChangeKind::Conflicted => Color::Magenta,
+        ChangeKind::Modified => theme::current().warn,
+        ChangeKind::Added => theme::current().ok,
+        ChangeKind::Deleted => theme::current().error,
+        ChangeKind::Renamed => theme::current().info,
+        ChangeKind::Untracked => theme::current().muted,
+        ChangeKind::Conflicted => theme::current().changed,
     }
 }
 
@@ -59,8 +59,8 @@ fn change_line(change: &FileChange, selected: bool) -> Line<'static> {
         style = style.add_modifier(Modifier::BOLD);
     }
     Line::from(vec![
-        Span::styled(pointer, Style::new().fg(ACCENT)),
-        Span::styled(staged, Style::new().fg(Color::Green)),
+        Span::styled(pointer, Style::new().fg(theme::current().accent)),
+        Span::styled(staged, Style::new().fg(theme::current().ok)),
         Span::styled(
             change.kind.letter().to_string(),
             Style::new().fg(kind_color(change.kind)),
@@ -73,7 +73,10 @@ fn change_line(change: &FileChange, selected: bool) -> Line<'static> {
 }
 
 fn muted(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), Style::new().fg(MUTED)))
+    Line::from(Span::styled(
+        text.to_string(),
+        Style::new().fg(theme::current().muted),
+    ))
 }
 
 pub(crate) fn render_diff(frame: &mut Frame, state: &AppState) {
@@ -93,7 +96,7 @@ pub(crate) fn render_diff(frame: &mut Frame, state: &AppState) {
             printable(&view.path.to_string_lossy()),
             printable(&view.base.label)
         ))
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -144,7 +147,7 @@ fn body_lines(view: &DiffView, rows: usize, width: usize) -> Vec<Line<'static>> 
         DiffContent::Failed(message) => {
             return vec![Line::from(Span::styled(
                 format!("Could not read the diff: {message}"),
-                Style::new().fg(Color::Red),
+                Style::new().fg(theme::current().error),
             ))];
         }
         DiffContent::Ready(diff) => diff,
@@ -178,8 +181,8 @@ fn number(value: Option<u32>) -> String {
 
 fn origin_style(origin: LineOrigin) -> (&'static str, Style) {
     match origin {
-        LineOrigin::Added => ("+", Style::new().fg(Color::Green)),
-        LineOrigin::Removed => ("-", Style::new().fg(Color::Red)),
+        LineOrigin::Added => ("+", Style::new().fg(theme::current().ok)),
+        LineOrigin::Removed => ("-", Style::new().fg(theme::current().error)),
         LineOrigin::Context => (" ", Style::default()),
     }
 }
@@ -198,7 +201,7 @@ fn unified_lines(diff: &FileDiff, scroll: usize, rows: usize) -> Vec<Line<'stati
                 lines.push(if offset == 0 {
                     Line::from(Span::styled(
                         hunk_header(hunk),
-                        Style::new().fg(Color::Cyan),
+                        Style::new().fg(theme::current().info),
                     ))
                 } else {
                     unified_line(&hunk.lines[offset - 1])
@@ -218,7 +221,7 @@ fn unified_line(line: &DiffLine) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!("{} {} ", number(line.old_no), number(line.new_no)),
-            Style::new().fg(MUTED),
+            Style::new().fg(theme::current().muted),
         ),
         Span::styled(format!("{mark} {}", line.text), style),
     ])
@@ -240,12 +243,13 @@ fn side_by_side_lines(
         .skip(view.scroll)
         .take(rows)
         .map(|row| match row {
-            SideRow::Header(text) => {
-                Line::from(Span::styled(text.clone(), Style::new().fg(Color::Cyan)))
-            }
+            SideRow::Header(text) => Line::from(Span::styled(
+                text.clone(),
+                Style::new().fg(theme::current().info),
+            )),
             SideRow::Pair { left, right } => {
                 let mut spans = side_cell(left.as_ref(), column, LineOrigin::Removed);
-                spans.push(Span::styled(" │ ", Style::new().fg(MUTED)));
+                spans.push(Span::styled(" │ ", Style::new().fg(theme::current().muted)));
                 spans.extend(side_cell(right.as_ref(), column, LineOrigin::Added));
                 Line::from(spans)
             }
@@ -275,7 +279,10 @@ fn side_cell(line: Option<&DiffLine>, width: usize, changed: LineOrigin) -> Vec<
         .collect();
     let used = NUMBER_WIDTH + 1 + text.chars().count();
     vec![
-        Span::styled(format!("{} ", number(numbered)), Style::new().fg(MUTED)),
+        Span::styled(
+            format!("{} ", number(numbered)),
+            Style::new().fg(theme::current().muted),
+        ),
         Span::styled(
             format!("{text}{}", " ".repeat(width.saturating_sub(used))),
             style,
@@ -296,7 +303,7 @@ fn render_picker(frame: &mut Frame, state: &AppState, view: &DiffView) {
     );
     let block = Block::bordered()
         .title(PICKER_TITLE)
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(theme::current().accent));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -315,7 +322,7 @@ fn render_picker(frame: &mut Frame, state: &AppState, view: &DiffView) {
                 let pointer = if index == highlight { "▶ " } else { "  " };
                 let chosen = if *base == view.base { "● " } else { "  " };
                 Line::from(vec![
-                    Span::styled(pointer, Style::new().fg(ACCENT)),
+                    Span::styled(pointer, Style::new().fg(theme::current().accent)),
                     Span::raw(format!("{chosen}{}", printable(&base.label))),
                 ])
             })
@@ -463,9 +470,9 @@ mod tests {
             buf[(x, y)].fg
         };
 
-        assert_eq!(colour_of("println(\"new\")"), Color::Green);
-        assert_eq!(colour_of("println(\"old\")"), Color::Red);
-        assert_eq!(colour_of("@@ -10"), Color::Cyan);
+        assert_eq!(colour_of("println(\"new\")"), theme::current().ok);
+        assert_eq!(colour_of("println(\"old\")"), theme::current().error);
+        assert_eq!(colour_of("@@ -10"), theme::current().info);
     }
 
     #[test]

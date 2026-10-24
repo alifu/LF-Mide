@@ -1,5 +1,6 @@
 //! The editor panel: what our Neovim shows, or a note on where Neovim is.
 
+use crate::theme;
 use lf_mide_core::screen::Screen;
 use lf_mide_core::text::visible as printable;
 use lf_mide_core::{AppState, EditorMode, Panel};
@@ -10,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
-use crate::{MUTED, panel_block};
+use crate::panel_block;
 
 pub(crate) fn render_editor(frame: &mut Frame, area: Rect, state: &AppState) {
     let title = if state.quit_pending {
@@ -29,7 +30,7 @@ pub(crate) fn render_editor(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let screen = state.editor_screen.as_deref().filter(|_| state.embedded);
     let Some(screen) = screen else {
-        let note = Span::styled(placeholder(state), Style::new().fg(MUTED));
+        let note = Span::styled(placeholder(state), Style::new().fg(theme::current().muted));
         frame.render_widget(Paragraph::new(note), inner);
         return;
     };

@@ -1,5 +1,6 @@
 //! The Files panel: the project's file tree.
 
+use crate::theme;
 use lf_mide_core::text::visible as printable;
 use lf_mide_core::{AppState, Panel};
 use ratatui::Frame;
@@ -8,7 +9,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
-use crate::{ACCENT, MUTED, panel_block};
+use crate::panel_block;
 
 pub(crate) fn render_tree(frame: &mut Frame, area: Rect, state: &AppState) {
     let block = panel_block(state, Panel::Files, "Files");
@@ -22,7 +23,7 @@ pub(crate) fn render_tree(frame: &mut Frame, area: Rect, state: &AppState) {
             "No files"
         };
         frame.render_widget(
-            Paragraph::new(Line::styled(note, Style::new().fg(MUTED))),
+            Paragraph::new(Line::styled(note, Style::new().fg(theme::current().muted))),
             inner,
         );
         return;
@@ -51,7 +52,7 @@ pub(crate) fn render_tree(frame: &mut Frame, area: Rect, state: &AppState) {
             } else if index == state.tree_selected {
                 Style::new().add_modifier(Modifier::BOLD)
             } else if row.is_dir {
-                Style::new().fg(ACCENT)
+                Style::new().fg(theme::current().accent)
             } else {
                 Style::new()
             };
