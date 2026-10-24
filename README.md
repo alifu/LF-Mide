@@ -1,4 +1,6 @@
-# LF-Mide
+<p align="center"><img src="assets/icon.png" alt="LF-Mide icon" width="160"></p>
+
+<h1 align="center">LF-Mide</h1>
 
 A lightweight, keyboard-driven **terminal IDE** for **Compose Multiplatform (CMP)** projects that target Android and iOS, written in Rust.
 
