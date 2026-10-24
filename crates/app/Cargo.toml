@@ -22,6 +22,7 @@ lf-mide-nav.workspace = true
 lf-mide-perf.workspace = true
 lf-mide-platform.workspace = true
 lf-mide-system.workspace = true
+lf-mide-tidy.workspace = true
 lf-mide-terminal.workspace = true
 libc.workspace = true
 lf-mide-ui.workspace = true

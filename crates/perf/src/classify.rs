@@ -54,10 +54,9 @@ pub fn classify(args: &str, pid: u32, own_pid: u32) -> Option<(ProcessKind, Stri
     if head.ends_with("/Xcode.app/Contents/MacOS/Xcode") {
         return Some((ProcessKind::Xcode, none()));
     }
-    if args.starts_with('/')
-        && args.contains("/Android Studio")
-        && args.contains(".app/Contents/MacOS/studio")
-    {
+    // The launcher is called `studio` whatever the app is named (a renamed
+    // or preview copy: "AS Canary.app").
+    if args.starts_with('/') && args.contains(".app/Contents/MacOS/studio") {
         return Some((ProcessKind::AndroidStudio, none()));
     }
     None
@@ -86,13 +85,14 @@ fn java_arguments(args: &str) -> Option<Vec<&str>> {
 }
 
 fn classify_java(args: &str, words: &[&str]) -> Option<(ProcessKind, String)> {
-    let kind = if words.contains(&GRADLE_DAEMON_CLASS) {
-        ProcessKind::GradleDaemon
-    } else if words.contains(&KOTLIN_DAEMON_CLASS) {
+    if words.contains(&GRADLE_DAEMON_CLASS) {
+        return Some((ProcessKind::GradleDaemon, gradle_distribution(args)));
+    }
+    let kind = if words.contains(&KOTLIN_DAEMON_CLASS) {
         ProcessKind::KotlinDaemon
     } else if args.starts_with('/')
-        && args.contains("/Android Studio")
         && args.contains(".app/Contents/jbr/")
+        && (args.contains("/Android Studio") || args.contains("idea.paths.selector=AndroidStudio"))
     {
         ProcessKind::AndroidStudio
     } else if words.iter().any(|word| names_kotlin_lsp(word)) {
@@ -112,6 +112,21 @@ fn names_kotlin_lsp(word: &str) -> bool {
     word.split('/').any(|part| part == "kotlin-lsp")
         || (last.starts_with("kotlin-lsp") && last.ends_with(".jar"))
         || last == "kotlin-language-server"
+}
+
+/// The Gradle version a daemon runs from: the folder under
+/// `wrapper/dists/` named in its class path (`gradle-8.14-bin`), or empty.
+fn gradle_distribution(args: &str) -> String {
+    let marker = "wrapper/dists/";
+    let Some(at) = args.find(marker) else {
+        return String::new();
+    };
+    args[at + marker.len()..]
+        .split('/')
+        .next()
+        .filter(|name| name.starts_with("gradle-"))
+        .map(|name| name.chars().take(60).collect())
+        .unwrap_or_default()
 }
 
 /// `-avd NAME` or `@NAME` from an emulator command line.
@@ -248,6 +263,21 @@ mod tests {
     }
 
     #[test]
+    fn a_gradle_daemon_names_the_distribution_it_runs_from() {
+        let wrapper = "/usr/bin/java -cp /Users/me/.gradle/wrapper/dists/gradle-7.6-bin/abc123/gradle-7.6/lib/gradle-launcher-7.6.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 7.6";
+        let installed = "/usr/bin/java -cp /opt/homebrew/Cellar/gradle/8.5/libexec/lib/x.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.5";
+
+        assert_eq!(
+            classify(wrapper, 1, OWN),
+            Some((ProcessKind::GradleDaemon, "gradle-7.6-bin".to_string()))
+        );
+        assert_eq!(
+            classify(installed, 1, OWN),
+            Some((ProcessKind::GradleDaemon, String::new()))
+        );
+    }
+
+    #[test]
     fn a_command_that_only_mentions_a_daemon_is_not_one() {
         for line in [
             "grep org.gradle.launcher.daemon.bootstrap.GradleDaemon",
@@ -364,6 +394,31 @@ mod tests {
         assert_eq!(kind, ProcessKind::Simulator);
         assert_eq!(udid, "23F0A11F-0DD8-4766-853D-987DE9852BAC");
         assert_eq!(odd, "", "an id that does not look like a UDID is dropped");
+    }
+
+    #[test]
+    fn android_studio_is_recognised_under_any_app_name() {
+        assert_eq!(
+            kinds_of("/Applications/AS Canary.app/Contents/MacOS/studio"),
+            Some(ProcessKind::AndroidStudio)
+        );
+        assert_eq!(
+            kinds_of(
+                "/Users/me/Apps/Preview.app/Contents/jbr/Contents/Home/bin/java -Didea.paths.selector=AndroidStudioPreview2025.1 -x"
+            ),
+            Some(ProcessKind::AndroidStudio)
+        );
+        assert_eq!(
+            kinds_of(
+                "/Applications/GoLand.app/Contents/jbr/Contents/Home/bin/java -Didea.paths.selector=GoLand2025.1"
+            ),
+            None,
+            "other JetBrains IDEs are not Android Studio"
+        );
+        assert_eq!(
+            kinds_of("/Applications/GoLand.app/Contents/MacOS/goland"),
+            None
+        );
     }
 
     #[test]

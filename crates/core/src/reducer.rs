@@ -496,7 +496,13 @@ fn settled_status(
             } else {
                 gave_up
             };
-            (state.status.as_deref() == Some(&format!("{verb} {}…", device.name)))
+            // The start message may carry a note after it (another emulator
+            // is running): it is still the message to replace.
+            let asked = format!("{verb} {}…", device.name);
+            state
+                .status
+                .as_deref()
+                .is_some_and(|message| message.starts_with(&asked))
                 .then(|| format!("{} {outcome}", device.name))
         });
     settled.or_else(|| state.status.clone())
@@ -688,8 +694,32 @@ pub(crate) fn start_or_stop_device(
         )),
         transitions,
         pending_commands,
-        status: Some(format!("{verb} {}…", device.name)),
+        status: Some(format!(
+            "{verb} {}…{}",
+            device.name,
+            crowding_note(&state, &device, action)
+        )),
         ..state
+    }
+}
+
+/// A second emulator or simulator of the same kind costs gigabytes: say so
+/// when one is already up.
+fn crowding_note(state: &AppState, device: &Device, action: DeviceAction) -> String {
+    if action != DeviceAction::Boot {
+        return String::new();
+    }
+    let other = state.devices.iter().find(|d| {
+        d.platform == device.platform
+            && d.id != device.id
+            && matches!(d.state, DeviceState::Running | DeviceState::Starting)
+    });
+    match other {
+        Some(other) => format!(
+            " ({} is also running: each one holds several GB, stop it if you can)",
+            other.name
+        ),
+        None => String::new(),
     }
 }
 
@@ -2000,6 +2030,51 @@ mod tests {
             booting,
             Action::DevicesLoaded {
                 devices: Arc::new(up),
+                errors: BTreeMap::new(),
+            },
+        );
+
+        assert_eq!(after.status.as_deref(), Some("Pixel_8 is running"));
+    }
+
+    #[test]
+    fn starting_a_second_device_of_the_same_kind_mentions_the_one_already_up() {
+        let mut devices = sample_devices();
+        devices[1].state = DState::Running; // Tablet
+        let mut s = with_devices(devices);
+        s.selected_devices
+            .insert(Platform::Android, "Pixel_8".into());
+
+        let booting = reduce(s, Action::BootDevice);
+
+        let status = booting.status.unwrap();
+        assert!(status.starts_with("Starting Pixel_8…"), "{status}");
+        assert!(status.contains("Tablet is also running"), "{status}");
+    }
+
+    #[test]
+    fn a_device_of_the_other_platform_or_a_stop_adds_no_note() {
+        let mut devices = sample_devices();
+        devices[2].state = DState::Running; // an iPad, while an Android one is chosen
+        let booting = reduce(with_devices(devices), Action::BootDevice);
+
+        assert_eq!(booting.status.as_deref(), Some("Starting Pixel_8…"));
+    }
+
+    #[test]
+    fn the_start_message_is_still_replaced_when_it_carried_a_note() {
+        let mut devices = sample_devices();
+        devices[1].state = DState::Running;
+        let mut s = with_devices(devices.clone());
+        s.selected_devices
+            .insert(Platform::Android, "Pixel_8".into());
+        let booting = reduce(s, Action::BootDevice);
+        devices[0].state = DState::Running;
+
+        let after = reduce(
+            booting,
+            Action::DevicesLoaded {
+                devices: Arc::new(devices),
                 errors: BTreeMap::new(),
             },
         );

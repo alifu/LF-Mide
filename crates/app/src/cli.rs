@@ -23,6 +23,46 @@ pub struct Cli {
 pub enum Command {
     /// Check that the tools LF-Mide needs are installed and suggest fixes.
     Doctor(DoctorArgs),
+    /// Show what could be freed on disk and, with --delete, free it.
+    Clean(CleanArgs),
+    /// Suggest Gradle memory settings and, with --apply, add the missing ones.
+    Tune(TuneArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CleanArgs {
+    /// Path inside the project (default: current directory).
+    pub path: Option<PathBuf>,
+
+    /// Really delete the rebuildable categories (it asks before each one).
+    #[arg(long)]
+    pub delete: bool,
+
+    /// Do not ask before deleting.
+    #[arg(long, requires = "delete")]
+    pub yes: bool,
+
+    /// Also clean these careful categories (comma separated names).
+    #[arg(long, value_delimiter = ',', value_name = "NAME")]
+    pub include: Vec<String>,
+
+    /// Clean only these categories (comma separated names).
+    #[arg(long, value_delimiter = ',', value_name = "NAME")]
+    pub only: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct TuneArgs {
+    /// Path inside the project (default: current directory).
+    pub path: Option<PathBuf>,
+
+    /// Add the missing settings to ~/.gradle/gradle.properties.
+    #[arg(long)]
+    pub apply: bool,
+
+    /// Include the configuration cache, which some plugins do not support yet.
+    #[arg(long)]
+    pub with_configuration_cache: bool,
 }
 
 #[derive(Debug, Args)]
@@ -55,6 +95,45 @@ mod tests {
 
         assert!(cli.command.is_none());
         assert_eq!(cli.path, None);
+    }
+
+    #[test]
+    fn clean_defaults_to_looking_only() {
+        let Some(Command::Clean(args)) = parse(&["clean"]).command else {
+            panic!("not clean")
+        };
+
+        assert!(!args.delete && !args.yes);
+        assert!(args.include.is_empty() && args.only.is_empty());
+    }
+
+    #[test]
+    fn clean_takes_comma_separated_names_and_yes_needs_delete() {
+        let Some(Command::Clean(args)) = parse(&[
+            "clean",
+            "--delete",
+            "--include",
+            "device-support,gradle-daemons",
+        ])
+        .command
+        else {
+            panic!("not clean")
+        };
+
+        assert!(args.delete);
+        assert_eq!(args.include, ["device-support", "gradle-daemons"]);
+        assert!(Cli::try_parse_from(["lf-mide", "clean", "--yes"]).is_err());
+    }
+
+    #[test]
+    fn tune_flags_parse() {
+        let Some(Command::Tune(args)) =
+            parse(&["tune", "--apply", "--with-configuration-cache"]).command
+        else {
+            panic!("not tune")
+        };
+
+        assert!(args.apply && args.with_configuration_cache);
     }
 
     #[test]

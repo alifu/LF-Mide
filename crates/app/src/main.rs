@@ -1,6 +1,7 @@
 //! LF-Mide: a lightweight terminal IDE for Compose Multiplatform projects.
 
 mod branch_watch;
+mod clean_cmd;
 mod cli;
 mod doctor_cmd;
 mod editor;
@@ -12,6 +13,7 @@ mod keymap;
 mod paths;
 mod perf_effects;
 mod settings;
+mod tune_cmd;
 
 use clap::Parser;
 use color_eyre::Result;
@@ -31,8 +33,11 @@ const PANIC_EXIT_CODE: i32 = 101;
 async fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
-    if let Some(Command::Doctor(args)) = cli.command {
-        std::process::exit(doctor_cmd::run(args)?);
+    match cli.command {
+        Some(Command::Doctor(args)) => std::process::exit(doctor_cmd::run(args)?),
+        Some(Command::Clean(args)) => std::process::exit(clean_cmd::run(args)?),
+        Some(Command::Tune(args)) => std::process::exit(tune_cmd::run(args)?),
+        None => {}
     }
 
     // Everything that can fail with a readable message happens before the

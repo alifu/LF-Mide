@@ -155,6 +155,40 @@ LF-Mide needs to know which Neovim to talk to: open one with `e`, or start your 
 and run `lf-mide --nvim-socket /tmp/nvim.sock`. Commit messages, author names and file contents come from the
 repository, so control characters are removed before they reach your screen or Neovim.
 
+## Freeing disk and memory: `clean` and `tune`
+
+Low on disk? `lf-mide clean` shows what is taking space and what could go, and **changes nothing** unless you add
+`--delete`:
+
+```bash
+lf-mide clean                       # look only (run it inside your project to include its build folders)
+lf-mide clean --delete              # clean the rebuildable ones, asking before each group
+lf-mide clean --delete --include device-support,ide-caches   # also these careful ones
+lf-mide clean --delete --yes --only derived-data             # no questions, just this group
+```
+
+- **Rebuildable (cleaned by `--delete`):** Xcode's DerivedData and LF-Mide's own iOS build products; the project's
+  `build/`, `.gradle/` and `.kotlin/` folders (only ones git already ignores and holds no tracked file in); old Gradle
+  versions (the newest two and your project's are kept); Gradle daemon logs older than a week; simulators whose runtime
+  is gone (done by `xcrun simctl delete unavailable`).
+- **Careful (only with `--include NAME`):** emulator quick-boot snapshots (the next start is a full boot), symbols from
+  physical iOS devices, simulator caches, Android Studio's caches, and running Gradle/Kotlin daemons (frees memory; cuts
+  a build in progress short). A category is blocked while the emulator or Android Studio it affects is running.
+- **For you to review:** the biggest items on most iOS developers' disks: simulator runtimes (those no simulator
+  uses are marked), simulators by size, Android virtual devices and system images. LF-Mide prints the exact command
+  (`xcrun simctl runtime delete …`, `avdmanager delete avd -n …`) and never runs it.
+
+Safety: every deletion goes through one checked path. A symbolic link is never followed or removed, a path must be
+strictly inside the folder it belongs to, and only your home folder and the project are allowed at all. Without a
+terminal (or `--yes`) it refuses to delete. Names are checked, so a misspelt category is an error rather than a no-op.
+
+`lf-mide tune` suggests Gradle memory settings you do not have yet: a heap ceiling for the Gradle and Kotlin daemons,
+stopping an idle daemon after 30 minutes instead of 3 hours, and the build cache (`--with-configuration-cache` adds that
+too). It looks at both your `~/.gradle/gradle.properties` and the project's, and `--apply` adds only the missing
+lines to **your** file (a backup is kept; the repository is never touched).
+
+When you start a second emulator or simulator of the same kind, the status line says which one is already running.
+
 ## Performance status
 
 The status bar shows `RAM used/total · swap X` (with ▲/▼ when swap is growing or shrinking). It is green normally,
@@ -262,6 +296,7 @@ crates/
 ├── core/             # state, actions, pure reducer, config, project detection, doctor result types
 ├── build/            # build, install, launch and log pipelines for Android and iOS
 ├── doctor/           # dependency checks behind `lf-mide doctor`
+├── tidy/             # `lf-mide clean` and `lf-mide tune`: disk and memory housekeeping
 ├── editor/           # shows a file in the running Neovim over its RPC socket
 ├── nav/              # project scan, fuzzy finder, ripgrep search
 ├── perf/             # memory, swap, disk and dev-process sampling (macOS)

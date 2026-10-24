@@ -999,6 +999,7 @@ dependencies = [
  "lf-mide-platform",
  "lf-mide-system",
  "lf-mide-terminal",
+ "lf-mide-tidy",
  "lf-mide-ui",
  "lf-mide-vcs",
  "libc",
@@ -1100,6 +1101,21 @@ dependencies = [
  "lf-mide-system",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lf-mide-tidy"
+version = "0.1.0"
+dependencies = [
+ "git2",
+ "lf-mide-core",
+ "lf-mide-perf",
+ "lf-mide-platform",
+ "lf-mide-system",
+ "lf-mide-vcs",
+ "libc",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

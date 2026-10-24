@@ -1,0 +1,22 @@
+[package]
+name = "lf-mide-tidy"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide disk and memory housekeeping: what can be cleaned, and Gradle tuning"
+
+[dependencies]
+lf-mide-core.workspace = true
+lf-mide-perf.workspace = true
+lf-mide-platform.workspace = true
+lf-mide-system.workspace = true
+lf-mide-vcs.workspace = true
+libc.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+git2.workspace = true
+
+[lints]
+workspace = true

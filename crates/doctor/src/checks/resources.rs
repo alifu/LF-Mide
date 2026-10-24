@@ -64,7 +64,7 @@ fn disk(ctx: &Ctx) -> Vec<CheckResult> {
                 result
             } else {
                 result.with_hint(
-                    "Remove unused simulator runtimes and ~/Library/Developer/Xcode/DerivedData",
+                    "Run `lf-mide clean` to see what can be freed (DerivedData, old Gradle versions, unused simulator runtimes)",
                 )
             }
         }

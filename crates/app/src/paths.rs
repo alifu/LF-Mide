@@ -25,6 +25,29 @@ fn global_config_from(xdg_config_home: Option<PathBuf>, home: Option<PathBuf>) -
     Some(base.join(APP_NAME).join(CONFIG_FILE))
 }
 
+/// The user's home folder, resolved, and only if it is an absolute path that
+/// exists: an empty or relative `HOME` would point housekeeping at whatever
+/// folder the command happens to run in.
+pub fn user_home(sys: &dyn lf_mide_system::System) -> color_eyre::Result<PathBuf> {
+    let home = sys
+        .home()
+        .filter(|home| home.is_absolute())
+        .and_then(|home| std::fs::canonicalize(home).ok())
+        .filter(|home| home.parent().is_some());
+    home.ok_or_else(|| color_eyre::eyre::eyre!("cannot find your home folder (is HOME set?)"))
+}
+
+/// Gradle's user home: `GRADLE_USER_HOME` if it names an absolute folder,
+/// else `~/.gradle`.
+pub fn gradle_user_home(sys: &dyn lf_mide_system::System, home: &Path) -> PathBuf {
+    sys.env("GRADLE_USER_HOME")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .and_then(|dir| std::fs::canonicalize(dir).ok())
+        .filter(|dir| dir.parent().is_some())
+        .unwrap_or_else(|| home.join(".gradle"))
+}
+
 /// Where this project's remembered build target and devices live:
 /// `<config dir>/projects/<name>-<hash>.toml`, next to the global config and
 /// outside the repository.
@@ -115,7 +138,45 @@ fn ensure_private(dir: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use lf_mide_system::fake::FakeSystem;
+
     use super::*;
+
+    #[test]
+    fn the_home_folder_must_be_absolute_and_real() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let real = std::fs::canonicalize(tmp.path()).unwrap();
+
+        let good = FakeSystem::new().home(real.to_str().unwrap());
+        let relative = FakeSystem::new().home("relative/dir");
+        let empty = FakeSystem::new().home("");
+        let missing = FakeSystem::new().home("/definitely/not/here");
+        let root = FakeSystem::new().home("/");
+
+        assert_eq!(user_home(&good).unwrap(), real);
+        for bad in [&relative, &empty, &missing, &root, &FakeSystem::new()] {
+            assert!(user_home(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn gradle_user_home_follows_the_environment_when_it_is_a_real_absolute_folder() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let custom = std::fs::canonicalize(tmp.path()).unwrap();
+        let home = Path::new("/Users/me");
+
+        let set = FakeSystem::new().env("GRADLE_USER_HOME", custom.to_str().unwrap());
+        let relative = FakeSystem::new().env("GRADLE_USER_HOME", "gradle-home");
+        let missing = FakeSystem::new().env("GRADLE_USER_HOME", "/not/a/folder");
+
+        assert_eq!(gradle_user_home(&set, home), custom);
+        assert_eq!(gradle_user_home(&relative, home), home.join(".gradle"));
+        assert_eq!(gradle_user_home(&missing, home), home.join(".gradle"));
+        assert_eq!(
+            gradle_user_home(&FakeSystem::new(), home),
+            home.join(".gradle")
+        );
+    }
 
     #[test]
     fn global_config_prefers_absolute_xdg_config_home() {

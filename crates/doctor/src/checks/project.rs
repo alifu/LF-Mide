@@ -59,7 +59,21 @@ fn gradle_memory(ctx: &Ctx) -> Vec<CheckResult> {
         .sys
         .read_to_string(&project.root.join("gradle.properties"))
         .unwrap_or_default();
-    let heap = |key| props::get(&text, key).and_then(|args| parse_xmx_mb(&args));
+    // The user's own ~/.gradle/gradle.properties applies to every project;
+    // the project's file wins where both set a key (as in Gradle).
+    let user_text = ctx
+        .sys
+        .home()
+        .and_then(|home| {
+            ctx.sys
+                .read_to_string(&home.join(".gradle/gradle.properties"))
+        })
+        .unwrap_or_default();
+    let heap = |key| {
+        props::get(&text, key)
+            .or_else(|| props::get(&user_text, key))
+            .and_then(|args| parse_xmx_mb(&args))
+    };
     let sizes = [
         ("Gradle", heap("org.gradle.jvmargs")),
         ("Kotlin", heap("kotlin.daemon.jvmargs")),
@@ -108,7 +122,7 @@ fn gradle_memory(ctx: &Ctx) -> Vec<CheckResult> {
     }
     vec![
         CheckResult::new(Category::Project, NAME, Status::Warn, detail).with_hint(
-            "In gradle.properties set org.gradle.jvmargs=-Xmx3g and kotlin.daemon.jvmargs=-Xmx2g",
+            "In gradle.properties set org.gradle.jvmargs=-Xmx3g and kotlin.daemon.jvmargs=-Xmx2g (`lf-mide tune` suggests more)",
         ),
     ]
 }
@@ -163,6 +177,37 @@ mod tests {
     fn one(mut results: Vec<CheckResult>) -> CheckResult {
         assert_eq!(results.len(), 1, "{results:?}");
         results.remove(0)
+    }
+
+    #[test]
+    fn the_users_own_gradle_properties_count_when_the_project_sets_nothing() {
+        let sys = FakeSystem::new()
+            .home("/Users/me")
+            .file("/p/gradle.properties", "kotlin.code.style=official\n")
+            .file(
+                "/Users/me/.gradle/gradle.properties",
+                "org.gradle.jvmargs=-Xmx4096M\nkotlin.daemon.jvmargs=-Xmx3072M\n",
+            );
+
+        let r = one(run(gradle_memory, &sys, Some(&project())));
+
+        assert!(r.detail.contains("Gradle 4 GB"), "{}", r.detail);
+        assert!(r.detail.contains("Kotlin 3 GB"), "{}", r.detail);
+    }
+
+    #[test]
+    fn the_projects_value_wins_over_the_users() {
+        let sys = FakeSystem::new()
+            .home("/Users/me")
+            .file("/p/gradle.properties", "org.gradle.jvmargs=-Xmx1024M\n")
+            .file(
+                "/Users/me/.gradle/gradle.properties",
+                "org.gradle.jvmargs=-Xmx8192M\n",
+            );
+
+        let r = one(run(gradle_memory, &sys, Some(&project())));
+
+        assert!(r.detail.contains("Gradle 1 GB"), "{}", r.detail);
     }
 
     #[test]
