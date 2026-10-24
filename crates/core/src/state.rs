@@ -15,6 +15,7 @@ use crate::output::{BuildState, Job, LogBuffer, OutputFilter, OutputTab, Problem
 use crate::perf::{PerfSample, StopRequest, Trend};
 use crate::prefs::ProjectPrefs;
 use crate::project::Project;
+use crate::screen::Screen;
 
 /// Focusable areas of the main layout, in Tab order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +149,13 @@ pub struct AppState {
     /// True once a file was shown in that Neovim, i.e. its socket is known
     /// to work; opens can then give up quickly if it has gone.
     pub editor_ready: bool,
+    /// Our own Neovim (in the editor panel) is running.
+    pub embedded: bool,
+    /// What that Neovim shows, after its latest redraw.
+    pub editor_screen: Option<Arc<Screen>>,
+    /// Quitting waits for that Neovim to close (it may ask about unsaved
+    /// changes first).
+    pub quit_pending: bool,
     /// Every project file (relative paths); empty until the first scan ends.
     pub files: FileList,
     pub files_loading: bool,
@@ -253,6 +261,24 @@ impl AppState {
             .find(|d| d.platform == self.target && &d.id == id)
     }
 
+    /// An overlay (finder, search, doctor, diff, picker, info, perf) or the
+    /// log filter is taking the keys.
+    pub fn overlay_open(&self) -> bool {
+        self.finder.is_some()
+            || self.grep.is_some()
+            || self.output_filter.editing
+            || self.diff.is_some()
+            || self.terminal_picker.is_some()
+            || self.info_open
+            || self.perf_open
+            || self.doctor != DoctorPanel::Closed
+    }
+
+    /// Keys go to our Neovim: it runs, its panel has focus, nothing covers it.
+    pub fn editor_has_keys(&self) -> bool {
+        self.embedded && self.focus == Panel::Editor && !self.overlay_open()
+    }
+
     /// The choices worth remembering between runs.
     pub fn prefs(&self) -> ProjectPrefs {
         ProjectPrefs {
@@ -284,6 +310,9 @@ impl AppState {
             pending_open: None,
             editor_launching: false,
             editor_launch_wanted: false,
+            embedded: false,
+            editor_screen: None,
+            quit_pending: false,
             files: Arc::new(Vec::new()),
             files_loading: true,
             expanded: BTreeSet::new(),
@@ -340,6 +369,46 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+
+    fn state() -> AppState {
+        let project = Project {
+            root: PathBuf::from("/p"),
+            name: "demo".into(),
+            layout: ProjectLayout::ComposeApp,
+        };
+        AppState::new(project, Config::default())
+    }
+
+    #[test]
+    fn the_editor_has_the_keys_only_when_running_focused_and_uncovered() {
+        let mut s = state();
+        s.embedded = true;
+        s.focus = Panel::Editor;
+        assert!(s.editor_has_keys());
+
+        let covered = AppState {
+            finder: Some(FinderState::default()),
+            ..s.clone()
+        };
+        let elsewhere = AppState {
+            focus: Panel::Files,
+            ..s.clone()
+        };
+        let not_running = AppState {
+            embedded: false,
+            ..s.clone()
+        };
+        let doctor = AppState {
+            doctor: DoctorPanel::Running,
+            ..s
+        };
+        for other in [covered, elsewhere, not_running, doctor] {
+            assert!(!other.editor_has_keys());
+        }
+    }
 
     #[test]
     fn next_and_prev_wrap_around() {

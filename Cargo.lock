@@ -1048,6 +1048,10 @@ dependencies = [
 name = "lf-mide-editor"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "crossterm",
+ "lf-mide-core",
+ "libc",
  "nvim-rs",
  "tempfile",
  "thiserror 2.0.21",

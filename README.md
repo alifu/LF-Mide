@@ -4,7 +4,7 @@ A lightweight, keyboard-driven **terminal IDE** for **Compose Multiplatform (CMP
 
 The goal is to work on a CMP app without keeping Android Studio and Xcode open, saving RAM and disk on low-storage MacBooks.
 
-> **Status:** early development (project scaffold only).
+> **Status:** early development: usable day to day, still changing.
 
 ## Planned features
 
@@ -33,7 +33,8 @@ Scope for now: **emulators and simulators only** (no physical devices).
 | M3 | Memory & disk tuning (`clean`, JVM heap defaults) |
 | M4 | Single-window IDE with embedded Neovim |
 
-Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
+Neovim runs **inside LF-Mide's editor panel** (M4). The earlier mode, Neovim in a split pane next to LF-Mide, is
+still there with `editor = "split"`.
 
 ## Requirements
 
@@ -41,12 +42,12 @@ Until M4, LF-Mide runs **next to Neovim** in a split terminal pane.
 |---|---|
 | Rust (stable, edition 2024) | Build LF-Mide |
 | A terminal: [iTerm2](https://iterm2.com) (primary), Ghostty, WezTerm, Kitty, Terminal.app, or tmux | Hosts LF-Mide and the Neovim split. Selectable in config |
-| Neovim ≥ 0.11 | Editor |
+| Neovim ≥ 0.11 | Editor (its built-in LSP client and completion are used; no plugins needed) |
 | JDK 17 or 21 | Gradle, Kotlin language server |
 | Android command-line tools (`platform-tools`, `emulator`, a system image) | Android builds, no Android Studio needed |
 | Xcode (CLI tools + one iOS simulator runtime) | iOS SDK and simulators. Xcode stays installed, but you don't need to open it |
-| [kotlin-lsp](https://github.com/Kotlin/kotlin-lsp) | Optional. Kotlin completion for plain JVM Gradle projects (it does not support Kotlin Multiplatform yet) |
-| [xcode-build-server](https://github.com/SolaWing/xcode-build-server) | Swift / ObjC completion via `sourcekit-lsp` |
+| [kmp-lsp](https://crates.io/crates/kmp-lsp) | Optional. Kotlin completion: `cargo install --locked kmp-lsp` |
+| `sourcekit-lsp` (comes with Xcode) + [xcode-build-server](https://github.com/SolaWing/xcode-build-server) | Swift / ObjC completion |
 | [ripgrep](https://github.com/BurntSushi/ripgrep) | Project search |
 
 ## Expected CMP project layout
@@ -73,7 +74,7 @@ Keys so far:
 | Key | Action |
 |---|---|
 | `Tab` / `Shift-Tab` | move focus between panels |
-| `e` | open Neovim in a split pane (do this first) |
+| `e` | start Neovim in the editor panel, or focus it (with `editor = "split"`: open it in a split pane) |
 | `f` | fuzzy-find a file and open it (`Ctrl-n`/`Ctrl-p` or arrows move, `Enter` opens, `Esc` cancels) |
 | `/` | search the project with ripgrep (`Enter` searches, then `Enter` opens the highlighted hit at its line) |
 | `t` | switch the build target between Android and iOS |
@@ -91,7 +92,7 @@ Keys so far:
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
-| `q` / `Ctrl-C` | quit (inside `f` and `/` every key is text, so `q` is just a letter) |
+| `q` / `Ctrl-C` | quit (inside `f` and `/` every key is text, so `q` is just a letter; in the editor every key is Neovim's) |
 
 In the file tree (focused by default): `j`/`k` or arrows move, `l`/`Right` expands, `h`/`Left` collapses or steps out,
 `Enter` opens a file or toggles a directory, `g`/`G` jump to top/bottom, `PageUp`/`PageDown` page.
@@ -225,7 +226,7 @@ Symbolic links are never followed or listed. Up to 200,000 files are listed. The
 ignores your own ripgrep config, so results are the same for everyone.
 
 Choosing a file sends it to the Neovim that `e` opened, over its RPC socket. If no Neovim is running yet, LF-Mide
-starts one in a split pane and opens the file (at the matching line for a search hit) as soon as it is up; a second
+starts one (in the editor panel, or in a split pane with `editor = "split"`) and opens the file (at the matching line for a search hit) as soon as it is up; a second
 choice while it is starting just replaces the file waiting to open. If Neovim cannot be started, the status line says
 why. The file name is passed as raw bytes and
 used only as data (never as part of a Neovim command), so names like `100%.txt` or `a b#c.kt` open correctly.
@@ -237,7 +238,37 @@ names inside it) that is not valid text, as can happen on network or foreign dis
 relative paths, so it is not mangled on the way to ripgrep, Gradle or Xcode. The file tree keeps an ordered index of the
 project, so opening or closing a folder takes microseconds even with 200,000 files.
 
-## Terminal and the editor split
+## The editor
+
+`e`, or choosing a file in the tree, the finder or a search, starts Neovim (`nvim --embed`) in the editor panel, in your
+project folder, with your own Neovim config. While the editor has focus **every key goes to Neovim**, `Ctrl-C`, `q`
+and `Tab` included, except the leader (`C-Space` by default, `leader = "..."` in the config), which hands focus back to
+the panels: then `f`, `/`, `B` and the rest work as usual, and `Tab` or `e` returns to the editor. Pastes arrive as one
+change (bracketed paste). Neovim's grid follows the panel when the terminal is resized, and the cursor takes Neovim's
+shape (block, bar in insert mode, underline in replace mode).
+
+Quitting with `q` closes Neovim first, with Neovim's own question if something is unsaved ("Save changes? Yes, No,
+Cancel"); Cancel keeps both running. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
+goes away (window closed, `SIGHUP`/`SIGTERM`), there is nobody left to answer, so Neovim is stopped at once and its swap
+file keeps the unsaved changes for recovery next time.
+
+Neovim also listens on a socket in LF-Mide's private folder, so opening files, git signs and blame work exactly as in
+split mode.
+
+**Completion.** Unless `lsp = false`, LF-Mide sets up Neovim's built-in LSP client for the servers it finds on your
+`PATH` and turns on completion as you type (nothing is inserted until you choose an entry):
+
+| Language | Server | Notes |
+|---|---|---|
+| Kotlin, Java | `kmp-lsp` | Fast (about 80 MB once its index is built; the first index of a project takes ~15 s and ~700 MB). It reads the code's structure without compiling it: members of your own classes, view models, data classes and constructor parameters complete; the Compose DSL (`Modifier.fillMaxWidth`, `LazyColumn`), chains (`Modifier.padding().`) and inferred types (`listOf(1).first`) mostly do not. Errors come from the Gradle build (Problems tab) |
+| Swift, Objective-C | `sourcekit-lsp` | Needs `buildServer.json` in the project (see the doctor) |
+
+The official JetBrains `kotlin-lsp` gives no completion for Kotlin Multiplatform projects yet, so it is not used.
+If you set up language servers in your own Neovim config, put `lsp = false` in LF-Mide's config to avoid running two.
+
+Not supported in the editor panel yet: the mouse, and widening the editor to the full window.
+
+## The split pane (`editor = "split"`)
 
 `e` starts `nvim --listen <socket>` in a new pane next to LF-Mide, in your project folder, using the terminal you
 chose (`T`, or `terminal = "..."` in the config; `auto` detects it from the environment).
@@ -282,8 +313,10 @@ Global: `~/.config/lf-mide/config.toml` (or `$XDG_CONFIG_HOME/lf-mide/config.tom
 Per project: `.lfmide.toml` in the project root, which overrides the global file.
 
 ```toml
-leader = "C-Space"     # prefix for IDE commands
-terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux
+leader = "C-Space"     # leaves the editor for the panels (Neovim notation: "C-Space", "C-\\", "F12")
+editor = "embedded"    # embedded (in the editor panel) | split (a pane next to LF-Mide)
+lsp = true             # set up kmp-lsp / sourcekit-lsp completion in the embedded Neovim
+terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux (for split mode)
 show_blame = false
 show_perf = true
 ```
@@ -307,7 +340,7 @@ crates/
 ├── build/            # build, install, launch and log pipelines for Android and iOS
 ├── doctor/           # dependency checks behind `lf-mide doctor`
 ├── tidy/             # `lf-mide clean` and `lf-mide tune`: disk and memory housekeeping
-├── editor/           # shows a file in the running Neovim over its RPC socket
+├── editor/           # Neovim: embedded session, redraw events, key notation, LSP setup, RPC socket calls
 ├── nav/              # project scan, fuzzy finder, ripgrep search
 ├── perf/             # memory, swap, disk and dev-process sampling (macOS)
 ├── platform/         # Android SDK / emulators and Xcode / simulators: list, boot, stop

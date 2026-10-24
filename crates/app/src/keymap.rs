@@ -10,6 +10,10 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if key.kind != KeyEventKind::Press {
         return None;
     }
+    // Our Neovim gets every key, Ctrl-C and q included, except the leader.
+    if state.editor_has_keys() {
+        return editor_key(state, key);
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if matches!(key.code, KeyCode::Char('c')) && ctrl {
         return Some(Action::Quit);
@@ -43,6 +47,15 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
         DoctorPanel::Closed => main_key(state, key.code, ctrl),
         DoctorPanel::Running | DoctorPanel::Ready(_) => doctor_key(key.code),
     }
+}
+
+/// A key for the embedded Neovim; the leader hands focus back to the panels.
+fn editor_key(state: &AppState, key: KeyEvent) -> Option<Action> {
+    let keys = lf_mide_editor::keys::notation(key)?;
+    if lf_mide_editor::keys::leader(&state.config.leader).as_ref() == Some(&keys) {
+        return Some(Action::Focus(Panel::Files));
+    }
+    Some(Action::EditorKeys(keys))
 }
 
 fn picker_key(code: KeyCode) -> Option<Action> {
@@ -358,6 +371,76 @@ mod tests {
 
     fn action(state: &AppState, code: KeyCode) -> Option<Action> {
         action_for(state, key(code))
+    }
+
+    fn editing() -> AppState {
+        let s = [
+            Action::OpenEditor,
+            Action::EditorLaunchStarted,
+            Action::EmbeddedStarted,
+        ]
+        .into_iter()
+        .fold(closed(), reduce);
+        AppState {
+            focus: Panel::Editor,
+            ..s
+        }
+    }
+
+    #[test]
+    fn every_key_goes_to_the_focused_embedded_editor() {
+        let s = editing();
+        let ctrl = |ch| press(KeyCode::Char(ch), KeyModifiers::CONTROL);
+
+        assert_eq!(
+            action(&s, KeyCode::Char('q')),
+            Some(Action::EditorKeys("q".into()))
+        );
+        assert_eq!(
+            action_for(&s, ctrl('c')),
+            Some(Action::EditorKeys("<C-c>".into()))
+        );
+        assert_eq!(
+            action(&s, KeyCode::Tab),
+            Some(Action::EditorKeys("<Tab>".into()))
+        );
+        assert_eq!(action(&s, KeyCode::CapsLock), None);
+    }
+
+    #[test]
+    fn the_leader_leaves_the_editor() {
+        let s = editing();
+        let custom = AppState {
+            config: Config {
+                leader: "C-\\".into(),
+                ..Config::default()
+            },
+            ..editing()
+        };
+
+        assert_eq!(
+            action_for(&s, press(KeyCode::Char(' '), KeyModifiers::CONTROL)),
+            Some(Action::Focus(Panel::Files))
+        );
+        assert_eq!(
+            action_for(&custom, press(KeyCode::Char('4'), KeyModifiers::CONTROL)),
+            Some(Action::Focus(Panel::Files))
+        );
+    }
+
+    #[test]
+    fn panels_keep_their_keys_when_the_editor_is_not_focused_or_not_running() {
+        let elsewhere = AppState {
+            focus: Panel::Files,
+            ..editing()
+        };
+        let not_running = AppState {
+            focus: Panel::Editor,
+            ..closed()
+        };
+
+        assert_eq!(action(&elsewhere, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(action(&not_running, KeyCode::Char('q')), Some(Action::Quit));
     }
 
     #[test]

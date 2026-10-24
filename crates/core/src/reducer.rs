@@ -8,6 +8,7 @@ use crate::action::Action;
 use crate::config::{Config, TerminalKind};
 use crate::devices::{Device, DeviceState, Platform};
 use crate::doctor::{Report, popup_content_rows};
+use crate::editor_reducer;
 use crate::git_reducer;
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
 use crate::nav::{TreeIndex, parent_row};
@@ -15,7 +16,7 @@ use crate::output_reducer;
 use crate::perf_reducer;
 use crate::state::{
     AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
-    MAX_TRANSITION_POLLS, Transition,
+    MAX_TRANSITION_POLLS, Panel, Transition,
 };
 
 /// Consumes `state` and returns the state that results from applying
@@ -23,10 +24,17 @@ use crate::state::{
 /// state on every action.
 pub fn reduce(state: AppState, action: Action) -> AppState {
     match action {
-        Action::Quit => AppState {
+        Action::Quit => editor_reducer::quit(state),
+        Action::QuitNow => AppState {
             should_quit: true,
             ..state
         },
+        Action::EmbeddedStarted => editor_reducer::started(state),
+        Action::EditorScreen(screen) => editor_reducer::screen(state, screen),
+        // Sent to Neovim by the app; nothing here changes.
+        Action::EditorKeys(_) | Action::EditorPaste(_) => state,
+        Action::EditorExited => editor_reducer::exited(state),
+        Action::EditorQuitCancelled => editor_reducer::quit_cancelled(state),
         Action::FocusNext => AppState {
             focus: state.focus.next(),
             ..state
@@ -124,6 +132,10 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             terminal_picker: None,
             ..state
         },
+        Action::OpenEditor if state.embedded => AppState {
+            focus: Panel::Editor,
+            ..state
+        },
         Action::OpenEditor if state.editor_launching => AppState {
             status: Some("Neovim is already opening…".to_string()),
             ..state
@@ -132,6 +144,11 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             status: Some("Opening Neovim…".to_string()),
             editor_launching: true,
             editor_launch_wanted: true,
+            focus: if editor_reducer::shows_files_here(&state) {
+                Panel::Editor
+            } else {
+                state.focus
+            },
             ..state
         },
         Action::EditorLaunchStarted => AppState {
@@ -156,7 +173,14 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             marks_key: None,
             // A new Neovim: its socket has not been proven yet.
             editor_ready: false,
-            status: Some("Neovim opened in a split pane".to_string()),
+            status: Some(
+                if state.embedded {
+                    "Neovim is ready"
+                } else {
+                    "Neovim opened in a split pane"
+                }
+                .to_string(),
+            ),
             ..state
         },
         Action::FileOpened(path) => git_reducer::file_shown(
@@ -170,6 +194,8 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         // Something found the old Neovim gone. A launch that is already under
         // way (the user pressed `e`, or chose a file) is not affected: it
         // still has to finish, and the file waiting for it still opens.
+        // Our own Neovim is known to be gone only when its process ends.
+        Action::EditorLost if state.embedded => state,
         Action::EditorLost => AppState {
             editor_socket: None,
             marks_key: None,
@@ -455,6 +481,11 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             })
         }),
         Action::OpenFile { path, line } => {
+            let focus = if editor_reducer::shows_files_here(&state) {
+                Panel::Editor
+            } else {
+                state.focus
+            };
             // Choosing a file ends whatever overlay it was chosen in.
             if state.editor_socket.is_none() {
                 // No Neovim yet: start one (unless one is on its way) and
@@ -465,6 +496,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                     pending_open: Some((path, line)),
                     editor_launching: true,
                     editor_launch_wanted: state.editor_launch_wanted || start,
+                    focus,
                     finder: None,
                     grep: None,
                     diff: None,
@@ -473,6 +505,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             }
             AppState {
                 status: Some(format!("Opening {}…", path.display())),
+                focus,
                 finder: None,
                 grep: None,
                 diff: None,

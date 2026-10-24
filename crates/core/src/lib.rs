@@ -6,6 +6,7 @@ pub mod config;
 pub mod devices;
 pub mod diff_view;
 pub mod doctor;
+mod editor_reducer;
 pub mod git;
 mod git_reducer;
 pub mod layout;
@@ -19,12 +20,13 @@ pub mod prefs;
 pub mod project;
 pub mod props;
 pub mod reducer;
+pub mod screen;
 pub mod state;
 pub mod text;
 pub mod version;
 
 pub use action::Action;
-pub use config::{Config, ConfigError, TerminalKind, set_terminal_in_config};
+pub use config::{Config, ConfigError, EditorMode, TerminalKind, set_terminal_in_config};
 pub use devices::{
     AndroidSdk, Device, DeviceState, Platform, SdkInfo, ToolInfo, XcodeSdk, display_path,
 };

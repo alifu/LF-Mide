@@ -20,6 +20,7 @@ lf-mide-terminal = { path = "crates/terminal" }
 lf-mide-vcs = { path = "crates/vcs" }
 lf-mide-ui = { path = "crates/ui" }
 
+async-trait = "0.1"
 clap = { version = "4.6", features = ["derive"] }
 color-eyre = "0.6"
 crossterm = { version = "0.29", features = ["event-stream"] }

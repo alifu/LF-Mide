@@ -1,5 +1,10 @@
 //! Talking to the Neovim we launched, over its `--listen` socket.
 
+pub mod embedded;
+pub mod keys;
+pub mod lsp;
+pub mod redraw;
+
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -120,6 +125,9 @@ pub enum EditorError {
     Rejected(String),
     #[error("Neovim did not answer in time")]
     TimedOut,
+    /// The program could not be started.
+    #[error("Cannot start Neovim: {0}")]
+    Start(String),
 }
 
 /// Shows `path` (an absolute path) in the Neovim listening on `socket`, with

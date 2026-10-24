@@ -8,6 +8,17 @@ use thiserror::Error;
 pub const DEFAULT_LEADER: &str = "C-Space";
 pub const PROJECT_CONFIG_FILE: &str = ".lfmide.toml";
 
+/// Where Neovim runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EditorMode {
+    /// Inside LF-Mide's editor panel.
+    #[default]
+    Embedded,
+    /// In a split pane of the terminal, next to LF-Mide.
+    Split,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalKind {
@@ -106,6 +117,9 @@ pub fn set_terminal_in_config(text: &str, kind: TerminalKind) -> String {
 pub struct Config {
     /// Prefix key for IDE commands, in Vim notation (e.g. `C-Space`).
     pub leader: String,
+    pub editor: EditorMode,
+    /// Set up language servers (completion) in the embedded Neovim.
+    pub lsp: bool,
     pub terminal: TerminalKind,
     pub show_blame: bool,
     pub show_perf: bool,
@@ -123,6 +137,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             leader: DEFAULT_LEADER.to_string(),
+            editor: EditorMode::Embedded,
+            lsp: true,
             terminal: TerminalKind::Auto,
             show_blame: false,
             show_perf: true,
@@ -150,6 +166,8 @@ pub enum ConfigError {
 #[serde(deny_unknown_fields)]
 struct PartialConfig {
     leader: Option<String>,
+    editor: Option<EditorMode>,
+    lsp: Option<bool>,
     terminal: Option<TerminalKind>,
     show_blame: Option<bool>,
     show_perf: Option<bool>,
@@ -177,6 +195,8 @@ impl Config {
 
         let merged = Config {
             leader: partial.leader.unwrap_or_else(|| self.leader.clone()),
+            editor: partial.editor.unwrap_or(self.editor),
+            lsp: partial.lsp.unwrap_or(self.lsp),
             terminal: partial.terminal.unwrap_or(self.terminal),
             show_blame: partial.show_blame.unwrap_or(self.show_blame),
             show_perf: partial.show_perf.unwrap_or(self.show_perf),
@@ -232,6 +252,24 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn the_editor_is_embedded_with_language_servers_unless_set_otherwise() {
+        let source = Path::new("/c.toml");
+
+        let split = Config::default()
+            .merged("editor = \"split\"\nlsp = false\n", source)
+            .unwrap();
+
+        assert_eq!(Config::default().editor, EditorMode::Embedded);
+        assert!(Config::default().lsp);
+        assert_eq!((split.editor, split.lsp), (EditorMode::Split, false));
+        assert!(
+            Config::default()
+                .merged("editor = \"vim\"", source)
+                .is_err()
+        );
+    }
 
     #[test]
     fn merged_overrides_only_given_fields() {

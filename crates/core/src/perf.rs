@@ -51,6 +51,8 @@ pub enum ProcessKind {
     GradleDaemon,
     KotlinDaemon,
     KotlinLsp,
+    /// The Kotlin language server LF-Mide sets up in its Neovim.
+    KmpLsp,
     Emulator,
     Simulator,
     Neovim,
@@ -66,6 +68,7 @@ impl ProcessKind {
             ProcessKind::GradleDaemon => "Gradle daemon",
             ProcessKind::KotlinDaemon => "Kotlin compile daemon",
             ProcessKind::KotlinLsp => "kotlin-lsp",
+            ProcessKind::KmpLsp => "kmp-lsp",
             ProcessKind::Emulator => "Android emulator",
             ProcessKind::Simulator => "iOS simulator",
             ProcessKind::Neovim => "nvim",
@@ -83,6 +86,7 @@ impl ProcessKind {
             ProcessKind::GradleDaemon
                 | ProcessKind::KotlinDaemon
                 | ProcessKind::KotlinLsp
+                | ProcessKind::KmpLsp
                 | ProcessKind::Emulator
                 | ProcessKind::Simulator
         )
@@ -291,6 +295,7 @@ mod tests {
             ProcessKind::GradleDaemon,
             ProcessKind::KotlinDaemon,
             ProcessKind::KotlinLsp,
+            ProcessKind::KmpLsp,
             ProcessKind::Emulator,
             ProcessKind::Simulator,
         ] {

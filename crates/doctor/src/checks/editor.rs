@@ -29,12 +29,12 @@ fn editor_tools(ctx: &Ctx) -> Vec<CheckResult> {
             "brew install neovim",
         ),
         spec(
-            "kotlin-lsp",
-            "kotlin-lsp",
+            "kmp-lsp",
+            "kmp-lsp",
             &["--version"],
             None,
             false,
-            "brew install JetBrains/utils/kotlin-lsp",
+            "cargo install --locked kmp-lsp",
         ),
         spec(
             "sourcekit-lsp",
@@ -112,7 +112,7 @@ mod tests {
             names,
             vec![
                 "Neovim",
-                "kotlin-lsp",
+                "kmp-lsp",
                 "sourcekit-lsp",
                 "xcode-build-server",
                 "clangd",
@@ -129,7 +129,7 @@ mod tests {
 
         assert_eq!(find(&results, "Neovim").status, Status::Missing);
         assert_eq!(find(&results, "git").status, Status::Missing);
-        assert_eq!(find(&results, "kotlin-lsp").status, Status::Warn);
+        assert_eq!(find(&results, "kmp-lsp").status, Status::Warn);
         assert_eq!(find(&results, "xcode-build-server").status, Status::Warn);
     }
 
@@ -149,12 +149,12 @@ mod tests {
     }
 
     #[test]
-    fn hints_name_the_brew_install_commands() {
+    fn hints_name_the_install_commands() {
         let results = run(&FakeSystem::new().env("PATH", "/opt/bin"));
 
         assert_eq!(
-            find(&results, "kotlin-lsp").hint.as_deref(),
-            Some("brew install JetBrains/utils/kotlin-lsp")
+            find(&results, "kmp-lsp").hint.as_deref(),
+            Some("cargo install --locked kmp-lsp")
         );
         assert_eq!(
             find(&results, "xcode-build-server").hint.as_deref(),

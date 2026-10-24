@@ -5,9 +5,13 @@ edition.workspace = true
 description = "LF-Mide control of a running Neovim over its RPC socket"
 
 [dependencies]
+async-trait.workspace = true
+crossterm.workspace = true
+lf-mide-core.workspace = true
+libc.workspace = true
 nvim-rs.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "rt"] }
 
 [dev-dependencies]
 tempfile.workspace = true

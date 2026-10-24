@@ -35,6 +35,9 @@ pub fn classify(args: &str, pid: u32, own_pid: u32) -> Option<(ProcessKind, Stri
     if names.iter().any(|n| is_kotlin_lsp_launcher(n)) {
         return Some((ProcessKind::KotlinLsp, none()));
     }
+    if basename(first) == "kmp-lsp" {
+        return Some((ProcessKind::KmpLsp, none()));
+    }
     if names.iter().any(|n| n.starts_with("qemu-system")) {
         // Other virtual machines (Colima, UTM, Docker) use qemu too; an
         // Android emulator always names its virtual device.
@@ -275,6 +278,20 @@ mod tests {
             classify(installed, 1, OWN),
             Some((ProcessKind::GradleDaemon, String::new()))
         );
+    }
+
+    #[test]
+    fn kmp_lsp_is_found_by_its_program() {
+        assert_eq!(
+            kinds_of("/Users/me/.cargo/bin/kmp-lsp"),
+            Some(ProcessKind::KmpLsp)
+        );
+        assert_eq!(
+            kinds_of("kmp-lsp --index-only /p"),
+            Some(ProcessKind::KmpLsp)
+        );
+        assert_eq!(kinds_of("cargo install kmp-lsp"), None);
+        assert_eq!(kinds_of("/bin/zsh -c kmp-lsp"), None);
     }
 
     #[test]

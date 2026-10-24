@@ -2,6 +2,7 @@
 //! [`AppState`]; nothing in this crate changes state.
 
 mod devices;
+mod editor;
 mod git;
 mod output;
 mod perf;
@@ -35,30 +36,59 @@ const ACCENT: Color = Color::Cyan;
 const MUTED: Color = Color::DarkGray;
 const BAR_BG: Color = Color::Rgb(40, 44, 52);
 
-pub fn render(frame: &mut Frame, state: &AppState) {
+/// Where each part of the main screen goes.
+struct Areas {
+    header: Rect,
+    files: Rect,
+    editor: Rect,
+    devices: Rect,
+    bottom: Rect,
+    status: Rect,
+}
+
+fn areas(screen: Rect) -> Areas {
     let [header, body, bottom, status] = Layout::vertical([
         Constraint::Length(HEADER_ROWS),
         Constraint::Min(MIN_BODY_ROWS),
         Constraint::Length(BOTTOM_ROWS),
         Constraint::Length(STATUS_ROWS),
     ])
-    .areas(frame.area());
+    .areas(screen);
     let [files, editor, devices] = Layout::horizontal([
         Constraint::Percentage(FILES_WIDTH_PCT),
         Constraint::Min(10),
         Constraint::Percentage(DEVICES_WIDTH_PCT),
     ])
     .areas(body);
+    Areas {
+        header,
+        files,
+        editor,
+        devices,
+        bottom,
+        status,
+    }
+}
+
+/// The part of the editor panel Neovim draws in, on a screen of this size:
+/// what Neovim's grid must be resized to.
+pub fn editor_area(screen: Rect) -> Rect {
+    Block::bordered().inner(areas(screen).editor)
+}
+
+pub fn render(frame: &mut Frame, state: &AppState) {
+    let Areas {
+        header,
+        files,
+        editor,
+        devices,
+        bottom,
+        status,
+    } = areas(frame.area());
 
     render_header(frame, header, state);
     tree::render_tree(frame, files, state);
-    render_placeholder(
-        frame,
-        editor,
-        state,
-        Panel::Editor,
-        "Neovim runs in a split pane (mode D)",
-    );
+    editor::render_editor(frame, editor, state);
     devices::render_devices(frame, devices, state);
     output::render_output(frame, bottom, state);
     render_status(frame, status, state);
@@ -265,18 +295,6 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
     ]);
     frame.render_widget(Paragraph::new(line).style(Style::new().bg(BAR_BG)), area);
-}
-
-fn render_placeholder(frame: &mut Frame, area: Rect, state: &AppState, panel: Panel, hint: &str) {
-    let title = match panel {
-        Panel::Files => "Files",
-        Panel::Editor => "Editor",
-        Panel::Devices => "Devices",
-        Panel::Bottom => "Output",
-    };
-    let body = Paragraph::new(Span::styled(hint.to_string(), Style::new().fg(MUTED)))
-        .block(panel_block(state, panel, title));
-    frame.render_widget(body, area);
 }
 
 fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {

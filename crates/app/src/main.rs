@@ -6,6 +6,7 @@ mod cli;
 mod doctor_cmd;
 mod editor;
 mod effects;
+mod embedded_editor;
 mod event_loop;
 mod git_effects;
 mod jobs;
@@ -55,10 +56,18 @@ async fn main() -> Result<()> {
         global.as_deref(),
         Some(&paths::project_config(&project.root)),
     )?;
+    if lf_mide_editor::keys::leader(&config.leader).is_none() {
+        color_eyre::eyre::bail!(
+            "leader = {:?} is not a key LF-Mide understands; try \"C-Space\" or \"C-\\\\\"",
+            config.leader
+        );
+    }
     let log_guard = init_logging();
     tracing::info!(root = %project.root.display(), "starting");
 
     let terminal = ratatui::try_init().wrap_err("cannot set up the terminal")?;
+    // Pastes arrive as one event, so they can go to Neovim as one change.
+    set_bracketed_paste(true);
     exit_on_panic();
     let mut state = AppState::new(project, config);
     if let Some(socket) = attached_socket(cli.nvim_socket) {
@@ -66,6 +75,7 @@ async fn main() -> Result<()> {
         state.status = Some("Attached to your Neovim".to_string());
     }
     let result = event_loop::run(terminal, state).await;
+    set_bracketed_paste(false);
     ratatui::restore();
     drop(log_guard);
     // Returning from `main` would wait for device listings still running on
@@ -75,6 +85,20 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     }
     result
+}
+
+/// Turns bracketed paste on or off. A terminal without it just types the
+/// pasted text, so a failure is only logged.
+fn set_bracketed_paste(on: bool) {
+    use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+    let outcome = if on {
+        crossterm::execute!(std::io::stdout(), EnableBracketedPaste)
+    } else {
+        crossterm::execute!(std::io::stdout(), DisableBracketedPaste)
+    };
+    if let Err(error) = outcome {
+        tracing::debug!(%error, "cannot change bracketed paste");
+    }
 }
 
 /// The Neovim socket named on the command line, made absolute (the app may
@@ -99,6 +123,7 @@ fn exit_on_panic() {
             tracing::error!(%info, "a doctor check panicked");
             return;
         }
+        set_bracketed_paste(false);
         restore_and_report(info);
         std::process::exit(PANIC_EXIT_CODE);
     }));

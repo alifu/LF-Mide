@@ -3,10 +3,13 @@
 use color_eyre::Result;
 use crossterm::event::{Event, EventStream};
 use futures::StreamExt;
-use lf_mide_core::{Action, AppState, DoctorPanel, Project, ProjectPrefs, TerminalKind, reduce};
+use lf_mide_core::{
+    Action, AppState, DoctorPanel, EditorMode, Project, ProjectPrefs, TerminalKind, reduce,
+};
 use lf_mide_doctor::system::SystemRunner;
 use lf_mide_terminal::{LaunchError, Launched, copy_to_clipboard, open_split};
 use ratatui::DefaultTerminal;
+use ratatui::layout::Rect;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +17,7 @@ use std::time::Duration;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+use crate::embedded_editor::EmbeddedEditor;
 use crate::{
     branch_watch, editor, effects, git_effects, jobs, keymap, paths, perf_effects, settings,
 };
@@ -57,6 +61,8 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         Duration::from_secs(state.config.perf_interval_secs),
         Arc::clone(&perf_visible),
     );
+    let mut embedded = EmbeddedEditor::default();
+    let sys = SystemRunner::new();
     let result = loop {
         if state.should_quit {
             break Ok(());
@@ -64,6 +70,12 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         if let Err(err) = terminal.draw(|frame| lf_mide_ui::render(frame, &state)) {
             break Err(err.into());
         }
+        let screen = match terminal.size() {
+            Ok(size) => Rect::new(0, 0, size.width, size.height),
+            Err(err) => break Err(err.into()),
+        };
+        embedded.fit(screen);
+        embedded.update_cursor(&state);
         let input = tokio::select! {
             event = events.next() => Input::Terminal(event),
             Some(first) = rx.recv() => Input::Background(first),
@@ -76,13 +88,18 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             Input::Terminal(Some(Ok(Event::Resize(_, rows)))) => {
                 vec![Action::ViewportChanged(rows)]
             }
+            Input::Terminal(Some(Ok(Event::Paste(text)))) if state.editor_has_keys() => {
+                vec![Action::EditorPaste(text)]
+            }
             Input::Terminal(Some(Ok(_))) => Vec::new(),
             Input::Terminal(Some(Err(err))) => break Err(err.into()),
-            Input::Terminal(None) => vec![Action::Quit],
+            Input::Terminal(None) => vec![Action::QuitNow],
             Input::Background(first) => drain(first, &mut rx),
             // The terminal window closed or the app was asked to end: leave
-            // through the normal path so builds and logs are stopped.
-            Input::Signal => vec![Action::Quit],
+            // through the normal path so builds and logs are stopped. There
+            // is no one left to answer Neovim; its swap files keep any
+            // unsaved changes.
+            Input::Signal => vec![Action::QuitNow],
         };
 
         // Room for more job output now that these were taken off the queue.
@@ -100,15 +117,35 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         let finder_before = state.finder.as_ref().map(|f| f.query.clone());
         let grep_before = state.grep.as_ref().and_then(|g| g.searched.clone());
         let files_before = Arc::clone(&state.files);
+        let quit_was_pending = state.quit_pending;
+        let launch_failed = actions
+            .iter()
+            .any(|a| matches!(a, Action::EditorLaunchFailed(_)));
+        embedded.forward(&actions, &tx);
         state = actions.into_iter().fold(state, reduce);
+        embedded.abandon_if_failed(launch_failed, &state);
+        if state.quit_pending && !quit_was_pending {
+            embedded.confirm_quit();
+        }
 
         if doctor_run_started(was_running, &state) {
             spawn_doctor(state.project.clone(), tx.clone());
         }
         // Neovim was asked for (by `e`, or by choosing a file with none open).
         if state.editor_launch_wanted && !state.should_quit {
-            spawn_editor(&state, tx.clone());
+            let started = match state.config.editor {
+                EditorMode::Split => {
+                    spawn_editor(&state, tx.clone());
+                    None
+                }
+                EditorMode::Embedded => {
+                    Some(embedded.start(&state, screen, &sys, tx.clone()).await)
+                }
+            };
             state = reduce(state, Action::EditorLaunchStarted);
+            if let Some(started) = started {
+                state = reduce(state, started);
+            }
         }
         if state.config.terminal != terminal_before {
             save_terminal_choice(state.config.terminal, &tx);
@@ -183,6 +220,8 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     };
     // Stop the things that start commands, then everything still running:
     // a search or a tool being waited for would otherwise be left behind.
+    embedded.terminate();
+    embedded.restore_cursor();
     watcher.abort();
     device_watch.abort();
     perf_watch.abort();

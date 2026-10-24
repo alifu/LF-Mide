@@ -13,12 +13,16 @@ use crate::nav::{FileList, FileMatch, GrepHit};
 use crate::output::{BuildOutcome, OutputTab};
 use crate::perf::PerfSample;
 use crate::prefs::ProjectPrefs;
+use crate::screen::Screen;
 use crate::state::BranchInfo;
 use crate::state::Panel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
+    /// Quit; with our Neovim running, after it has closed.
     Quit,
+    /// Quit at once (the terminal went away or the app was told to end).
+    QuitNow,
     FocusNext,
     FocusPrev,
     BranchChanged(Option<BranchInfo>),
@@ -54,6 +58,18 @@ pub enum Action {
     PendingOpenSent,
     /// Neovim could not be reached; forget it so `e` starts a new one.
     EditorLost,
+    /// Our own Neovim (in the editor panel) has been started.
+    EmbeddedStarted,
+    /// What that Neovim shows now.
+    EditorScreen(Arc<Screen>),
+    /// Keys for that Neovim, in its notation (the app sends them).
+    EditorKeys(String),
+    /// Pasted text for that Neovim (the app sends it).
+    EditorPaste(String),
+    /// That Neovim has ended.
+    EditorExited,
+    /// The user said Cancel to Neovim's question on quitting.
+    EditorQuitCancelled,
     /// This project file is now showing in Neovim.
     FileOpened(PathBuf),
     /// A scan of the project finished.
