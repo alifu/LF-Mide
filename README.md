@@ -62,6 +62,30 @@ Both CMP templates are supported:
                                      └── settings.gradle.kts
 ```
 
+## Install
+
+With [Homebrew](https://brew.sh) (macOS 14 or later; installs the prebuilt program and its Neovim and ripgrep dependencies):
+
+```bash
+brew install alifu/tap/lf-mide
+```
+
+Update and uninstall:
+
+```bash
+brew upgrade lf-mide
+brew uninstall lf-mide
+```
+
+Or download `lf-mide-<version>-macos-universal.tar.gz` from the [latest release](https://github.com/alifu/LF-Mide/releases/latest), unpack it and copy `lf-mide` into a folder in your `PATH`.
+
+Then, in a CMP project:
+
+```bash
+lf-mide            # run it inside the project, or pass the project folder
+lf-mide doctor     # check the tools it needs
+```
+
 ## Build & run
 
 ```bash

@@ -1,0 +1,70 @@
+name: Release
+
+# Push a tag such as v0.1.0. The number must match the version in Cargo.toml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag and Cargo.toml name the same version
+        run: sh Scripts/release/check-version.sh "${GITHUB_REF_NAME#v}"
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build for Apple silicon and Intel, then join them into one binary
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --locked -p lf-mide --target aarch64-apple-darwin
+          cargo build --release --locked -p lf-mide --target x86_64-apple-darwin
+          mkdir -p dist/stage
+          lipo -create -output dist/stage/lf-mide \
+            target/aarch64-apple-darwin/release/lf-mide \
+            target/x86_64-apple-darwin/release/lf-mide
+          cp LICENSE dist/stage/
+
+      - name: Pack the tarball and the formula
+        id: pack
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="lf-mide-${version}-macos-universal.tar.gz"
+          tar -C dist/stage -czf "dist/$name" lf-mide LICENSE
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          sha="$(cut -d ' ' -f 1 "dist/$name.sha256")"
+          sh Scripts/release/make-formula.sh "$version" "$sha" > dist/lf-mide.rb
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/${{ steps.pack.outputs.name }}" "dist/${{ steps.pack.outputs.name }}.sha256" dist/lf-mide.rb \
+            --title "LF-Mide ${GITHUB_REF_NAME#v}" \
+            --notes "Install with Homebrew: \`brew install alifu/tap/lf-mide\`. Or download the tarball, unpack it and copy \`lf-mide\` into your PATH."
+
+      # Optional: with a TAP_TOKEN secret (a token that can push to alifu/homebrew-tap) the formula is updated by itself.
+      # Without it, copy dist/lf-mide.rb (attached to the release) to Formula/lf-mide.rb in the tap.
+      - name: Update the Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        if: ${{ env.TAP_TOKEN != '' }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/alifu/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp dist/lf-mide.rb tap/Formula/lf-mide.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lf-mide.rb
+          git commit -m "lf-mide ${GITHUB_REF_NAME#v}" || exit 0
+          git push
