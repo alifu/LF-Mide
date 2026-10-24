@@ -11,10 +11,12 @@
 //! bundle id, device ids) is validated first.
 
 mod android;
+mod buildserver;
 mod ios;
 mod logs;
 mod stop;
 mod streamer;
+mod variants;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -24,9 +26,11 @@ use lf_mide_core::{BuildOutcome, Device, Platform, ProjectLayout};
 use lf_mide_system::System;
 use lf_mide_system::stream::{Exit, StreamSpec};
 
+pub use buildserver::{BuildServerPlan, apply as apply_build_server, plan as plan_build_server};
 pub use logs::log_spec;
 pub use stop::stop_app;
 pub use streamer::ProcessStreamer;
+pub use variants::list_variants;
 
 /// Set by one thread to ask a running pipeline to stop.
 #[derive(Debug, Clone, Default)]
@@ -71,6 +75,8 @@ pub struct Context<'a> {
     /// Where Xcode may put its build products.
     pub derived_data: &'a Path,
     pub device: &'a Device,
+    /// The Gradle variant or Xcode scheme to build; `None` is the default.
+    pub variant: Option<&'a str>,
 }
 
 /// Why a pipeline stopped before the end.

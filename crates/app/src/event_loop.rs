@@ -61,6 +61,8 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         Duration::from_secs(state.config.perf_interval_secs),
         Arc::clone(&perf_visible),
     );
+    let build_running = Arc::new(AtomicBool::new(false));
+    let build_clock = perf_effects::spawn_build_clock(tx.clone(), Arc::clone(&build_running));
     let mut embedded = EmbeddedEditor::default();
     let sys = SystemRunner::new();
     let result = loop {
@@ -162,6 +164,10 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             git_effects::spawn_git_refresh(state.project.root.clone(), tx.clone());
         }
         perf_visible.store(state.config.show_perf || state.perf_open, Ordering::Relaxed);
+        build_running.store(
+            state.build.phase == lf_mide_core::BuildPhase::Running,
+            Ordering::Relaxed,
+        );
         // Builds and log streams the user asked for.
         let (next, queued) = jobs::take_jobs(state);
         state = next;
@@ -223,6 +229,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     watcher.abort();
     device_watch.abort();
     perf_watch.abort();
+    build_clock.abort();
     git_watch.abort();
     job_runner.cancel_all();
     lf_mide_system::terminate_running_commands();

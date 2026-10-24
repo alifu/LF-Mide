@@ -37,7 +37,11 @@ pub(crate) fn run(
         return Err(failed(format!("{} has an unusual id", ctx.device.name)));
     }
     let container = find_container(ctx.root, sys).map_err(failed)?;
-    let scheme = pick_scheme(&container, ctx.root, sys, cancel, report)?;
+    let scheme = match ctx.variant {
+        Some(scheme) if valid_scheme(scheme) => scheme.to_string(),
+        Some(scheme) => return Err(failed(format!("unusual scheme name: {scheme}"))),
+        None => pick_scheme(&container, ctx.root, sys, cancel, report)?,
+    };
     let container_path = container.relative.display().to_string();
     let derived = ctx.derived_data.display().to_string();
 
@@ -136,19 +140,53 @@ fn pick_scheme(
 }
 
 pub(crate) fn schemes_from(json: &str, stem: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(json).ok()?;
-    let schemes: Vec<&str> = ["workspace", "project"]
+    let schemes = all_schemes(json);
+    schemes
+        .iter()
+        .find(|scheme| scheme.as_str() == stem)
+        .or_else(|| schemes.first())
+        .cloned()
+}
+
+/// Every usable scheme in `xcodebuild -list -json` output.
+fn all_schemes(json: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    ["workspace", "project"]
         .iter()
         .filter_map(|key| value.get(key)?.get("schemes")?.as_array())
         .flatten()
         .filter_map(|scheme| scheme.as_str())
-        .filter(|scheme| !scheme.starts_with('-') && !scheme.is_empty())
-        .collect();
-    schemes
-        .iter()
-        .find(|scheme| **scheme == stem)
-        .or_else(|| schemes.first())
-        .map(|scheme| scheme.to_string())
+        .filter(|scheme| valid_scheme(scheme))
+        .map(String::from)
+        .collect()
+}
+
+/// A scheme name that is safe as a command-line value.
+fn valid_scheme(scheme: &str) -> bool {
+    !scheme.is_empty() && !scheme.starts_with('-') && !scheme.chars().any(char::is_control)
+}
+
+/// The schemes of the Xcode project, the default first.
+pub(crate) fn scheme_names(root: &Path, sys: &dyn System) -> Result<Vec<String>, String> {
+    let container = find_container(root, sys)?;
+    let relative = container.relative.display().to_string();
+    let listing = sys
+        .run_in(
+            root,
+            "xcrun",
+            &["xcodebuild", container.flag, &relative, "-list", "-json"],
+        )
+        .map_err(|error| format!("xcodebuild: {error}"))?;
+    if !listing.success {
+        return Err("xcodebuild could not list the Xcode schemes".to_string());
+    }
+    let mut schemes = all_schemes(&listing.stdout);
+    if let Some(at) = schemes.iter().position(|scheme| *scheme == container.stem) {
+        schemes.swap(0, at);
+    }
+    Ok(schemes)
 }
 
 /// The built `.app` for the simulator.
@@ -237,6 +275,7 @@ mod tests {
             layout: ProjectLayout::AndroidAppShared,
             derived_data: Path::new("/cache"),
             device,
+            variant: None,
         }
     }
 
@@ -430,6 +469,62 @@ mod tests {
         assert_eq!(
             bundle_info(Path::new(APP), &spaced).unwrap().executable,
             "My App"
+        );
+    }
+
+    #[test]
+    fn the_chosen_scheme_is_built_without_listing_the_schemes() {
+        let streamer =
+            ScriptedStreamer::new(vec![ScriptedStreamer::ok(vec!["** BUILD SUCCEEDED **"])]);
+        let device = simulator(UDID);
+        let sys = project();
+        let context = Context {
+            variant: Some("iosApp Staging"),
+            ..ctx(&device)
+        };
+
+        let _ = build_and_run(
+            &context,
+            &sys,
+            &streamer,
+            &mut Recorder::default(),
+            &CancelFlag::default(),
+        );
+
+        let specs = streamer.specs.borrow();
+        let scheme_at = specs[0].args.iter().position(|a| a == "-scheme").unwrap();
+        assert_eq!(specs[0].args[scheme_at + 1], "iosApp Staging");
+        assert!(sys.ran_in().is_empty(), "no `-list` was needed");
+    }
+
+    #[test]
+    fn a_scheme_that_could_pass_for_an_option_is_refused() {
+        let streamer = ScriptedStreamer::new(vec![]);
+        let device = simulator(UDID);
+        let context = Context {
+            variant: Some("-destination"),
+            ..ctx(&device)
+        };
+
+        let outcome = build_and_run(
+            &context,
+            &project(),
+            &streamer,
+            &mut Recorder::default(),
+            &CancelFlag::default(),
+        );
+
+        assert!(matches!(outcome, BuildOutcome::Failed(Some(m)) if m.contains("scheme")));
+        assert!(streamer.specs.borrow().is_empty());
+    }
+
+    #[test]
+    fn schemes_are_listed_with_the_one_named_like_the_project_first() {
+        let sys = project().ok(LIST, r#"{"project":{"schemes":["Other","-bad","iosApp"]}}"#);
+
+        assert_eq!(
+            scheme_names(Path::new("/proj"), &sys).unwrap(),
+            ["iosApp", "Other"]
         );
     }
 }

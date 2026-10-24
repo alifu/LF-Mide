@@ -15,6 +15,7 @@ mod mouse;
 mod paths;
 mod perf_effects;
 mod settings;
+mod swift_setup_cmd;
 mod tune_cmd;
 
 use clap::Parser;
@@ -39,6 +40,7 @@ async fn main() -> Result<()> {
         Some(Command::Doctor(args)) => std::process::exit(doctor_cmd::run(args)?),
         Some(Command::Clean(args)) => std::process::exit(clean_cmd::run(args)?),
         Some(Command::Tune(args)) => std::process::exit(tune_cmd::run(args)?),
+        Some(Command::SwiftSetup(args)) => std::process::exit(swift_setup_cmd::run(args)?),
         None => {}
     }
 

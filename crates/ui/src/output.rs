@@ -30,13 +30,14 @@ pub(crate) fn build_summary(state: &AppState) -> Option<(String, Color)> {
     match build.phase {
         BuildPhase::Idle => None,
         BuildPhase::Running => {
-            let mut text = format!("▶ {}", build.step);
+            let mut text = format!("{} {}", spinner(build.tick_ms), build.step);
             if let Some(device) = &build.device {
                 text.push_str(&format!(" {device}"));
             }
             if let Some(task) = &build.task {
                 text.push_str(&format!(" · {task}"));
             }
+            text.push_str(&format!(" · {}", elapsed(build.elapsed_ms())));
             Some((text, theme::current().info))
         }
         BuildPhase::Succeeded => Some((
@@ -52,6 +53,24 @@ pub(crate) fn build_summary(state: &AppState) -> Option<(String, Color)> {
             Some((format!("✗ build failed{errors}"), theme::current().error))
         }
         BuildPhase::Cancelled => Some(("■ build cancelled".to_string(), theme::current().warn)),
+    }
+}
+
+/// Braille spinner frames, and how long each one shows.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_FRAME_MS: u64 = 100;
+
+fn spinner(clock_ms: u64) -> &'static str {
+    SPINNER[(clock_ms / SPINNER_FRAME_MS) as usize % SPINNER.len()]
+}
+
+/// `12s`, `1m05s`.
+fn elapsed(millis: u64) -> String {
+    let seconds = millis / 1000;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m{:02}s", seconds / 60, seconds % 60)
     }
 }
 
@@ -435,7 +454,18 @@ mod tests {
             },
         );
 
-        assert!(screen(&started).contains("▶ Building Pixel_8 · :androidApp:compileDebugKotlin"));
+        let running = reduce(started.clone(), Action::Tick { millis: 4_000 });
+        let running = reduce(running, Action::Tick { millis: 66_000 });
+
+        let text = screen(&running);
+        assert!(
+            text.contains("Building Pixel_8 · :androidApp:compileDebugKotlin · 1m02s"),
+            "{text}"
+        );
+        assert!(text.contains("⠋ Building"), "{text}");
+        assert!(
+            screen(&started).contains("⠋ Building Pixel_8 · :androidApp:compileDebugKotlin · 0s")
+        );
         assert!(screen(&done).contains("✓ built and running · 12.3s"));
     }
 

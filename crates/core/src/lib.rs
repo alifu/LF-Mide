@@ -24,6 +24,7 @@ pub mod reducer;
 pub mod screen;
 pub mod state;
 pub mod text;
+mod variant_reducer;
 pub mod version;
 
 pub use action::Action;
@@ -57,5 +58,6 @@ pub use project::{Project, ProjectError, ProjectLayout};
 pub use reducer::reduce;
 pub use state::{
     AppState, BranchInfo, DeviceAction, DeviceCommand, Direction, DoctorPanel, FinderState,
-    GrepState, MAX_QUERY_CHARS, MAX_TRANSITION_POLLS, Panel, Transition,
+    GrepState, MAX_QUERY_CHARS, MAX_TRANSITION_POLLS, Panel, Transition, VariantPicker,
 };
+pub use variant_reducer::choice_noun;

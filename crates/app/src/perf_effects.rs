@@ -41,6 +41,32 @@ pub fn spawn_perf_watch(
     })
 }
 
+/// How often the clock of a running build ticks.
+const BUILD_TICK: Duration = Duration::from_millis(100);
+
+/// Sends [`Action::Tick`] every [`BUILD_TICK`] while `active` is set (a
+/// build is running); an idle app is not woken.
+pub fn spawn_build_clock(
+    tx: UnboundedSender<Action>,
+    active: Arc<AtomicBool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let epoch = tokio::time::Instant::now();
+        let mut ticker = tokio::time::interval(BUILD_TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            if !active.load(Ordering::Relaxed) {
+                continue;
+            }
+            let millis = u64::try_from(epoch.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if tx.send(Action::Tick { millis }).is_err() {
+                return;
+            }
+        }
+    })
+}
+
 /// Whether `pid` may be sent a signal at all: a real process that is not
 /// init, not us, and not a value that would mean "a whole process group".
 fn may_signal(pid: u32, own_pid: u32) -> bool {

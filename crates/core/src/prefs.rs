@@ -21,6 +21,10 @@ pub struct ProjectPrefs {
     pub android_device: Option<String>,
     /// Simulator UDID.
     pub ios_device: Option<String>,
+    /// Gradle variant, e.g. `freeDebug`.
+    pub android_variant: Option<String>,
+    /// Xcode scheme.
+    pub ios_variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -28,6 +32,8 @@ struct Raw {
     target: Option<String>,
     android_device: Option<String>,
     ios_device: Option<String>,
+    android_variant: Option<String>,
+    ios_variant: Option<String>,
 }
 
 impl ProjectPrefs {
@@ -39,6 +45,8 @@ impl ProjectPrefs {
             target: raw.target.as_deref().and_then(Platform::from_config_name),
             android_device: raw.android_device.filter(|id| plausible_id(id)),
             ios_device: raw.ios_device.filter(|id| plausible_id(id)),
+            android_variant: raw.android_variant.filter(|id| plausible_id(id)),
+            ios_variant: raw.ios_variant.filter(|id| plausible_id(id)),
         }
     }
 
@@ -47,6 +55,8 @@ impl ProjectPrefs {
             target: self.target.map(|p| p.config_name().to_string()),
             android_device: self.android_device.clone(),
             ios_device: self.ios_device.clone(),
+            android_variant: self.android_variant.clone(),
+            ios_variant: self.ios_variant.clone(),
         };
         // Plain strings only, so serializing cannot fail.
         toml::to_string(&raw).unwrap_or_default()
@@ -56,6 +66,13 @@ impl ProjectPrefs {
         match platform {
             Platform::Android => self.android_device.as_deref(),
             Platform::Ios => self.ios_device.as_deref(),
+        }
+    }
+
+    pub fn variant_for(&self, platform: Platform) -> Option<&str> {
+        match platform {
+            Platform::Android => self.android_variant.as_deref(),
+            Platform::Ios => self.ios_variant.as_deref(),
         }
     }
 
@@ -119,6 +136,8 @@ mod tests {
             target: Some(Platform::Ios),
             android_device: Some("Medium_Phone_API_36".into()),
             ios_device: Some("23F0A11F-0DD8-4766-853D-987DE9852BAC".into()),
+            android_variant: Some("freeDebug".into()),
+            ios_variant: Some("iosApp".into()),
         }
     }
 

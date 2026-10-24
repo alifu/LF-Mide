@@ -3,6 +3,7 @@
 pub mod android;
 pub mod editor;
 pub mod ios;
+pub mod macos;
 pub mod project;
 pub mod resources;
 pub mod terminal;
@@ -120,6 +121,7 @@ pub fn all() -> Vec<CheckFn> {
         ios::CHECKS,
         editor::CHECKS,
         terminal::CHECKS,
+        macos::CHECKS,
         project::CHECKS,
         resources::CHECKS,
     ]

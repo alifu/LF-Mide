@@ -12,6 +12,7 @@ mod search;
 mod testing;
 pub mod theme;
 mod tree;
+mod variant_picker;
 
 use lf_mide_core::layout::{BOTTOM_ROWS, HEADER_ROWS, MIN_BODY_ROWS, STATUS_ROWS};
 use lf_mide_core::text::visible as printable;
@@ -135,6 +136,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     render_status(frame, status, state);
     render_doctor(frame, state);
     render_terminal_picker(frame, state);
+    variant_picker::render_variant_picker(frame, state);
     search::render_finder(frame, state);
     search::render_grep(frame, state);
     devices::render_info(frame, state);

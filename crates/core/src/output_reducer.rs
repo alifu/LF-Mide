@@ -100,14 +100,19 @@ pub(crate) fn run_app(state: AppState) -> AppState {
     }
     let id = state.last_job_id + 1;
     let mut pending_jobs = state.pending_jobs.clone();
+    let variant = state.variants.get(&device.platform).cloned();
     pending_jobs.push(Job::Build(BuildRequest {
         id,
         device: device.clone(),
+        variant: variant.clone(),
     }));
     let mut output_scroll = state.output_scroll;
     output_scroll[OutputTab::Build.index()] = 0;
     AppState {
-        status: Some(format!("Building for {}…", device.name)),
+        status: Some(match &variant {
+            Some(variant) => format!("Building {variant} for {}…", device.name),
+            None => format!("Building for {}…", device.name),
+        }),
         build: BuildState {
             phase: BuildPhase::Running,
             platform: Some(device.platform),
@@ -196,6 +201,20 @@ fn stop_app(state: AppState) -> AppState {
         return append(stopped, OutputTab::log_of(device.platform), vec![note]);
     }
     stopped
+}
+
+pub(crate) fn tick(state: AppState, millis: u64) -> AppState {
+    if state.build.phase != BuildPhase::Running {
+        return state;
+    }
+    AppState {
+        build: BuildState {
+            tick_ms: millis,
+            first_tick_ms: state.build.first_tick_ms.or(Some(millis)),
+            ..state.build.clone()
+        },
+        ..state
+    }
 }
 
 pub(crate) fn app_launched(state: AppState, id: u64, app_id: String) -> AppState {
@@ -339,9 +358,15 @@ fn follow_logs(state: AppState, device: &Device) -> AppState {
     let id = state.last_job_id + 1;
     let tab = OutputTab::log_of(device.platform);
     let mut pending_jobs = state.pending_jobs.clone();
+    let app_id = state
+        .build
+        .app_id
+        .clone()
+        .filter(|_| state.build.device_id.as_deref() == Some(device.id.as_str()));
     pending_jobs.push(Job::StartLogs(LogRequest {
         id,
         device: device.clone(),
+        app_id,
     }));
     let mut log_streams = state.log_streams.clone();
     log_streams.insert(
@@ -622,7 +647,7 @@ mod tests {
         assert_eq!(after.output_tab, OutputTab::Build);
         assert!(matches!(
             &after.pending_jobs[..],
-            [Job::Build(BuildRequest { id: 1, device })] if device.id == "Pixel_8"
+            [Job::Build(BuildRequest { id: 1, device, .. })] if device.id == "Pixel_8"
         ));
     }
 
@@ -975,7 +1000,80 @@ mod tests {
         assert_eq!(s.build.task, None);
     }
 
+    // --- the clock ---
+
+    #[test]
+    fn ticks_measure_the_running_build_from_its_first_tick() {
+        let mut s = building();
+        for millis in [5_000, 5_100, 7_400] {
+            s = reduce(s, Action::Tick { millis });
+        }
+
+        assert_eq!(s.build.elapsed_ms(), 2_400);
+    }
+
+    #[test]
+    fn ticks_change_nothing_when_no_build_is_running() {
+        let idle = running_android();
+        let finished = reduce(
+            building(),
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Succeeded,
+                millis: 10,
+            },
+        );
+
+        assert_eq!(reduce(idle.clone(), Action::Tick { millis: 9 }), idle);
+        assert_eq!(
+            reduce(finished.clone(), Action::Tick { millis: 9 }),
+            finished
+        );
+    }
+
+    #[test]
+    fn a_new_build_starts_its_clock_again() {
+        let first = reduce(building(), Action::Tick { millis: 1_000 });
+        let done = reduce(
+            first,
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Cancelled,
+                millis: 10,
+            },
+        );
+
+        let again = reduce(reduce(done, Action::RunApp), Action::Tick { millis: 9_000 });
+
+        assert_eq!(again.build.elapsed_ms(), 0);
+    }
+
     // --- how a build ends ---
+
+    #[test]
+    fn the_log_after_a_run_is_told_which_app_it_belongs_to() {
+        let launched = reduce(
+            building(),
+            Action::AppLaunched {
+                id: 1,
+                app_id: "com.example.app".to_string(),
+            },
+        );
+
+        let s = reduce(
+            launched,
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Succeeded,
+                millis: 1,
+            },
+        );
+
+        let Some(Job::StartLogs(request)) = s.pending_jobs.last() else {
+            panic!("no log job")
+        };
+        assert_eq!(request.app_id.as_deref(), Some("com.example.app"));
+    }
 
     #[test]
     fn success_records_the_time_and_follows_the_device_log() {

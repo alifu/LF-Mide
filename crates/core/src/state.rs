@@ -161,6 +161,10 @@ pub struct AppState {
     pub detected_terminal: Option<TerminalKind>,
     /// Highlighted row of the terminal picker while it is open.
     pub terminal_picker: Option<usize>,
+    /// The build variant (Android) or scheme (iOS) picked for each platform;
+    /// without one the default is built.
+    pub variants: BTreeMap<Platform, String>,
+    pub variant_picker: Option<VariantPicker>,
     /// Where the Neovim we launched listens, once it is open.
     pub editor_socket: Option<PathBuf>,
     /// A file the user chose before Neovim was running: opened as soon as it
@@ -305,6 +309,7 @@ impl AppState {
             || self.output_filter.editing
             || self.diff.is_some()
             || self.terminal_picker.is_some()
+            || self.variant_picker.is_some()
             || self.info_open
             || self.help_open
             || self.perf_open
@@ -322,8 +327,19 @@ impl AppState {
             target: Some(self.target),
             android_device: self.selected_devices.get(&Platform::Android).cloned(),
             ios_device: self.selected_devices.get(&Platform::Ios).cloned(),
+            android_variant: self.variants.get(&Platform::Android).cloned(),
+            ios_variant: self.variants.get(&Platform::Ios).cloned(),
         }
     }
+}
+
+/// The open variant/scheme picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantPicker {
+    pub platform: Platform,
+    /// `None` while the project is still being read.
+    pub options: Option<Vec<String>>,
+    pub highlight: usize,
 }
 
 impl AppState {
@@ -342,6 +358,8 @@ impl AppState {
             terminal_height: DEFAULT_TERMINAL_HEIGHT,
             detected_terminal: None,
             terminal_picker: None,
+            variants: BTreeMap::new(),
+            variant_picker: None,
             editor_socket: None,
             editor_ready: false,
             pending_open: None,

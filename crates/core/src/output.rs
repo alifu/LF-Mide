@@ -247,8 +247,20 @@ pub struct BuildState {
     /// id), once it is running; `leader+s` stops it.
     pub app_id: Option<String>,
     pub millis: Option<u64>,
+    /// The clock at the latest tick of the running build.
+    pub tick_ms: u64,
+    /// The clock at the first tick of the running build.
+    pub first_tick_ms: Option<u64>,
     pub errors: usize,
     pub warnings: usize,
+}
+
+impl BuildState {
+    /// Milliseconds the running build has taken, as far as the ticks show.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.first_tick_ms
+            .map_or(0, |first| self.tick_ms.saturating_sub(first))
+    }
 }
 
 /// How a build and run pipeline ended.
@@ -265,6 +277,8 @@ pub enum BuildOutcome {
 pub struct BuildRequest {
     pub id: u64,
     pub device: Device,
+    /// The variant or scheme to build; `None` builds the default.
+    pub variant: Option<String>,
 }
 
 /// Follow the log of this device.
@@ -272,6 +286,9 @@ pub struct BuildRequest {
 pub struct LogRequest {
     pub id: u64,
     pub device: Device,
+    /// The app the last run launched on this device: the log can be
+    /// limited to its process.
+    pub app_id: Option<String>,
 }
 
 /// Stop this app on this device.
@@ -288,6 +305,8 @@ pub enum Job {
     CancelBuild {
         id: u64,
     },
+    /// Read the project for the variants (Android) or schemes (iOS) it has.
+    LoadVariants(Platform),
     StartLogs(LogRequest),
     StopLogs(Platform),
     StopApp(StopAppRequest),

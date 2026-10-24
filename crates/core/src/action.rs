@@ -126,6 +126,16 @@ pub enum Action {
     LeaderPressed,
     /// The leader's next key was taken (or it was cancelled).
     LeaderDone,
+    /// Choose the build variant (Android) or scheme (iOS).
+    OpenVariantPicker,
+    VariantPickerMove(i16),
+    VariantPickerSelect,
+    VariantPickerCancel,
+    /// The choices the project offers for `platform` (or why none).
+    VariantsLoaded {
+        platform: Platform,
+        result: Result<Vec<String>, String>,
+    },
     /// Switch the build target between Android and iOS.
     ToggleTarget,
     /// What is installed for each platform.
@@ -167,6 +177,11 @@ pub enum Action {
     AppLaunched {
         id: u64,
         app_id: String,
+    },
+    /// A moment on a clock that runs while a build does, `millis` since the
+    /// ticker started. Drives the spinner and the elapsed time.
+    Tick {
+        millis: u64,
     },
     /// What build `id` is doing now ("Installing", ...).
     BuildStep {

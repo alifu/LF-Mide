@@ -48,7 +48,10 @@ fn lines() -> Vec<Line<'static>> {
             "p P D i",
             "performance  ·  its indicator  ·  doctor  ·  environment",
         ),
-        key("T  R", "choose the terminal  ·  reload the file tree"),
+        key(
+            "v  T  R",
+            "build variant or scheme  ·  terminal  ·  reload the file tree",
+        ),
         key(
             "?  q",
             "this help  ·  quit (Neovim asks about unsaved changes)",

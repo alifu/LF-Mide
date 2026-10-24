@@ -32,3 +32,4 @@ CLAUDE.local.md
 *.profraw
 *.profdata
 lcov.info
+__pycache__/

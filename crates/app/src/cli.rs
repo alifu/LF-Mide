@@ -27,6 +27,8 @@ pub enum Command {
     Clean(CleanArgs),
     /// Suggest Gradle memory settings and, with --apply, add the missing ones.
     Tune(TuneArgs),
+    /// Write buildServer.json so Swift completion understands the Xcode project.
+    SwiftSetup(SwiftSetupArgs),
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +65,16 @@ pub struct TuneArgs {
     /// Include the configuration cache, which some plugins do not support yet.
     #[arg(long)]
     pub with_configuration_cache: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SwiftSetupArgs {
+    /// Path inside the project (default: current directory).
+    pub path: Option<PathBuf>,
+
+    /// Really write buildServer.json (otherwise only show the command).
+    #[arg(long)]
+    pub apply: bool,
 }
 
 #[derive(Debug, Args)]
@@ -134,6 +146,17 @@ mod tests {
         };
 
         assert!(args.apply && args.with_configuration_cache);
+    }
+
+    #[test]
+    fn swift_setup_flags_parse() {
+        let Some(Command::SwiftSetup(args)) = parse(&["swift-setup", "--apply", "/p"]).command
+        else {
+            panic!("not swift-setup")
+        };
+
+        assert!(args.apply);
+        assert_eq!(args.path, Some(PathBuf::from("/p")));
     }
 
     #[test]

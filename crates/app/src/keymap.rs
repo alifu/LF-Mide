@@ -55,6 +55,9 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
             diff_key(state, key.code)
         };
     }
+    if state.variant_picker.is_some() {
+        return variant_picker_key(key.code);
+    }
     if state.terminal_picker.is_some() {
         return picker_key(key.code);
     }
@@ -130,6 +133,7 @@ fn leader_command(key: KeyEvent) -> Action {
         KeyCode::Char('P') => Action::TogglePerfIndicator,
         KeyCode::Char('D') => Action::ToggleDoctor,
         KeyCode::Char('T') => Action::OpenTerminalPicker,
+        KeyCode::Char('v') => Action::OpenVariantPicker,
         KeyCode::Char('e') => Action::OpenEditor,
         KeyCode::Char('f') => Action::OpenFinder,
         KeyCode::Char('/') => Action::OpenGrep,
@@ -150,6 +154,17 @@ pub fn paste_actions(state: &AppState, text: &str) -> Vec<Action> {
         .filter(|ch| !ch.is_control())
         .filter_map(|ch| action_for(state, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)))
         .collect()
+}
+
+fn variant_picker_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc => Some(Action::VariantPickerCancel),
+        KeyCode::Enter => Some(Action::VariantPickerSelect),
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::VariantPickerMove(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::VariantPickerMove(-1)),
+        KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
+    }
 }
 
 fn picker_key(code: KeyCode) -> Option<Action> {
@@ -1087,6 +1102,28 @@ mod tests {
 
     fn picker_open() -> AppState {
         reduce(closed(), Action::OpenTerminalPicker)
+    }
+
+    #[test]
+    fn v_opens_the_variant_picker_which_has_its_own_keys() {
+        assert_eq!(
+            after_leader(&closed(), KeyCode::Char('v')),
+            Some(Action::OpenVariantPicker)
+        );
+        let open = reduce(closed(), Action::OpenVariantPicker);
+
+        assert_eq!(
+            action(&open, KeyCode::Enter),
+            Some(Action::VariantPickerSelect)
+        );
+        assert_eq!(
+            action(&open, KeyCode::Char('j')),
+            Some(Action::VariantPickerMove(1))
+        );
+        assert_eq!(
+            action(&open, KeyCode::Esc),
+            Some(Action::VariantPickerCancel)
+        );
     }
 
     #[test]

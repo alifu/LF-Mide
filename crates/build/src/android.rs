@@ -8,6 +8,7 @@ use lf_mide_platform::android::adb_path;
 use lf_mide_system::System;
 use lf_mide_system::stream::StreamSpec;
 
+use crate::variants::{android_variants, capitalized};
 use crate::{
     CancelFlag, Context, Report, Step, Streamer, failed, plain_identifier, run_step, stream_step,
 };
@@ -16,11 +17,15 @@ const GRADLE_WRAPPER: &str = "gradlew";
 const GRADLE_FILES: [&str; 2] = ["build.gradle.kts", "build.gradle"];
 /// Reads the target device (`ANDROID_SERIAL`) when installing.
 const SERIAL_ENV: &str = "ANDROID_SERIAL";
+const DEBUG: &str = "debug";
 
 /// What the build file says about the Android app.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AndroidApp {
     pub module: &'static str,
+    /// The build file, for the ids of variants other than debug.
+    pub build_file_text: String,
+    pub application_id: String,
     /// Package names the installed debug app may have, most likely first:
     /// the id with its suffixes, then without them.
     pub package_candidates: Vec<String>,
@@ -40,6 +45,7 @@ pub(crate) fn run(
         .filter(|serial| plain_identifier(serial))
         .ok_or_else(|| failed(format!("{} has no adb serial", ctx.device.name)))?;
     let app = app_info(ctx.root, ctx.layout, sys).map_err(failed)?;
+    let target = app.target(ctx.variant).map_err(failed)?;
     // Checked to be inside the project; then run by its name relative to the
     // project folder (the working directory), so the project's own path is
     // never turned into text.
@@ -50,7 +56,7 @@ pub(crate) fn run(
         program: format!("./{GRADLE_WRAPPER}"),
         args: vec![
             "--console=plain".to_string(),
-            format!(":{}:installDebug", app.module),
+            format!(":{}:install{}", app.module, target.task_suffix),
         ],
         cwd: Some(ctx.root.to_path_buf()),
         env: vec![(SERIAL_ENV.to_string(), serial.to_string())],
@@ -59,7 +65,7 @@ pub(crate) fn run(
 
     report.step("Launching");
     let adb = adb_path(sys).ok_or_else(|| failed("adb was not found"))?;
-    let package = installed_package(sys, &adb, serial, &app.package_candidates)
+    let package = installed_package(sys, &adb, serial, &target.package_candidates)
         .ok_or_else(|| failed("the installed app was not found on the device"))?;
     run_step(
         sys,
@@ -90,18 +96,8 @@ pub(crate) fn app_info(
     layout: ProjectLayout,
     sys: &dyn System,
 ) -> Result<AndroidApp, String> {
-    let module = match layout {
-        ProjectLayout::ComposeApp => "composeApp",
-        ProjectLayout::AndroidAppShared => "androidApp",
-    };
-    let build_file = GRADLE_FILES
-        .iter()
-        .map(|name| root.join(module).join(name))
-        .find(|path| sys.exists(path))
-        .ok_or_else(|| format!("{module}/build.gradle.kts was not found"))?;
-    let text = sys
-        .read_to_string(&build_file)
-        .ok_or_else(|| format!("could not read {}", build_file.display()))?;
+    let module = module_of(layout);
+    let (build_file, text) = read_build_file(root, module, sys)?;
     let application_id = quoted_value(&text, "applicationId")
         .or_else(|| quoted_value(&text, "namespace"))
         .filter(|id| valid_application_id(id))
@@ -113,28 +109,103 @@ pub(crate) fn app_info(
         })?;
     Ok(AndroidApp {
         module,
-        package_candidates: package_candidates(&application_id, &text),
+        package_candidates: package_candidates(&application_id, &text, None, DEBUG),
+        application_id,
+        build_file_text: text,
     })
 }
 
-/// The id of the debug variant (`installDebug`): the base id plus the
-/// `applicationIdSuffix` of `defaultConfig` and of the `debug` build type.
-/// The other spellings follow in case the build file is more unusual than
-/// this reads; the device decides which one is really installed.
-fn package_candidates(base: &str, build_file: &str) -> Vec<String> {
+fn module_of(layout: ProjectLayout) -> &'static str {
+    match layout {
+        ProjectLayout::ComposeApp => "composeApp",
+        ProjectLayout::AndroidAppShared => "androidApp",
+    }
+}
+
+/// The module's build file and its text.
+fn read_build_file(
+    root: &Path,
+    module: &str,
+    sys: &dyn System,
+) -> Result<(PathBuf, String), String> {
+    let build_file = GRADLE_FILES
+        .iter()
+        .map(|name| root.join(module).join(name))
+        .find(|path| sys.exists(path))
+        .ok_or_else(|| format!("{module}/build.gradle.kts was not found"))?;
+    let text = sys
+        .read_to_string(&build_file)
+        .ok_or_else(|| format!("could not read {}", build_file.display()))?;
+    Ok((build_file, text))
+}
+
+/// The text of the Android module's build file.
+pub(crate) fn build_file_text(
+    root: &Path,
+    layout: ProjectLayout,
+    sys: &dyn System,
+) -> Result<String, String> {
+    read_build_file(root, module_of(layout), sys).map(|(_, text)| text)
+}
+
+/// What to install for one variant.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct VariantTarget {
+    /// `Debug` in `installDebug`.
+    pub task_suffix: String,
+    pub package_candidates: Vec<String>,
+}
+
+impl AndroidApp {
+    /// The Gradle task and package ids for `variant`; debug when `None`.
+    pub(crate) fn target(&self, variant: Option<&str>) -> Result<VariantTarget, String> {
+        let Some(name) = variant.filter(|name| *name != DEBUG) else {
+            return Ok(VariantTarget {
+                task_suffix: capitalized(DEBUG),
+                package_candidates: self.package_candidates.clone(),
+            });
+        };
+        let found = android_variants(&self.build_file_text)?
+            .into_iter()
+            .find(|variant| variant.name == name)
+            .ok_or_else(|| format!("variant {name} is not in the build file"))?;
+        Ok(VariantTarget {
+            task_suffix: capitalized(&found.name),
+            package_candidates: package_candidates(
+                &self.application_id,
+                &self.build_file_text,
+                found.flavor.as_deref(),
+                &found.build_type,
+            ),
+        })
+    }
+}
+
+/// The id of a variant (`installDebug`): the base id plus the
+/// `applicationIdSuffix` of `defaultConfig`, of the flavor and of the build
+/// type. The other spellings follow in case the build file is more unusual
+/// than this reads; the device decides which one is really installed.
+fn package_candidates(
+    base: &str,
+    build_file: &str,
+    flavor: Option<&str>,
+    build_type: &str,
+) -> Vec<String> {
     let suffix_in = |block: &str| {
         block_after(build_file, block)
             .and_then(|text| quoted_value(text, "applicationIdSuffix"))
             .unwrap_or_default()
     };
     let default_suffix = suffix_in("defaultConfig");
-    let debug_suffix = suffix_in("debug");
+    let flavor_suffix = flavor.map(suffix_in).unwrap_or_default();
+    let type_suffix = suffix_in(build_type);
     let mut candidates = Vec::new();
     for id in [
-        format!("{base}{default_suffix}{debug_suffix}"),
+        format!("{base}{default_suffix}{flavor_suffix}{type_suffix}"),
+        format!("{base}{default_suffix}{flavor_suffix}"),
         format!("{base}{default_suffix}"),
         base.to_string(),
-        format!("{base}.debug"),
+        format!("{base}.{build_type}"),
     ] {
         if valid_application_id(&id) && !candidates.contains(&id) {
             candidates.push(id);
@@ -162,7 +233,7 @@ fn installed_package(
 
 /// The text between the braces of the first `name { ... }` block (also
 /// `name("...") {`, `getByName("name") {`).
-fn block_after<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn block_after<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     let mut from = 0;
     while let Some(found) = text[from..].find(name) {
         let start = from + found + name.len();
@@ -283,6 +354,7 @@ android {
             layout: ProjectLayout::AndroidAppShared,
             derived_data: Path::new("/cache"),
             device,
+            variant: None,
         }
     }
 
@@ -387,7 +459,7 @@ android {
 
     #[test]
     fn the_debug_variants_package_is_the_base_id_with_its_suffixes() {
-        let candidates = package_candidates("com.example.app", SUFFIXED);
+        let candidates = package_candidates("com.example.app", SUFFIXED, None, "debug");
 
         assert_eq!(
             candidates,
@@ -399,7 +471,7 @@ android {
             ]
         );
         assert_eq!(
-            package_candidates("com.a.b", "android { }"),
+            package_candidates("com.a.b", "android { }", None, "debug"),
             ["com.a.b", "com.a.b.debug"]
         );
     }
@@ -408,7 +480,10 @@ android {
     fn a_suffix_in_another_build_type_is_not_used() {
         let text = "buildTypes { release { applicationIdSuffix = \".rel\" } }";
 
-        assert_eq!(package_candidates("com.a.b", text)[0], "com.a.b");
+        assert_eq!(
+            package_candidates("com.a.b", text, None, "debug")[0],
+            "com.a.b"
+        );
     }
 
     #[test]
@@ -431,6 +506,8 @@ android {
         let candidates = package_candidates(
             "com.a.b",
             "defaultConfig { applicationIdSuffix = \".beta\" }\ndebug { applicationIdSuffix = \".debug\" }",
+            None,
+            "debug",
         );
 
         assert_eq!(
@@ -642,5 +719,64 @@ android {
         let app = app_info(Path::new("/proj"), ProjectLayout::ComposeApp, &sys).unwrap();
 
         assert_eq!(app.module, "composeApp");
+    }
+
+    const FLAVORED: &str = r#"
+android {
+    defaultConfig { applicationId = "com.example.app" }
+    buildTypes {
+        debug { applicationIdSuffix = ".debug" }
+    }
+    productFlavors {
+        create("free") { applicationIdSuffix = ".free" }
+        create("paid")
+    }
+}
+"#;
+
+    fn flavored() -> AndroidApp {
+        let sys = project().file("/proj/androidApp/build.gradle.kts", FLAVORED);
+        app_info(Path::new("/proj"), ProjectLayout::AndroidAppShared, &sys).unwrap()
+    }
+
+    #[test]
+    fn a_variant_picks_its_install_task_and_package_ids() {
+        let app = flavored();
+
+        let default = app.target(None).unwrap();
+        let free = app.target(Some("freeDebug")).unwrap();
+        let paid_release = app.target(Some("paidRelease")).unwrap();
+
+        assert_eq!(default.task_suffix, "Debug");
+        assert_eq!(free.task_suffix, "FreeDebug");
+        assert_eq!(free.package_candidates[0], "com.example.app.free.debug");
+        assert_eq!(paid_release.task_suffix, "PaidRelease");
+        assert_eq!(paid_release.package_candidates[0], "com.example.app");
+        assert!(app.target(Some("nopeDebug")).is_err());
+    }
+
+    #[test]
+    fn the_chosen_variant_is_what_gradle_installs() {
+        let sys = project().file("/proj/androidApp/build.gradle.kts", FLAVORED);
+        let streamer = ScriptedStreamer::new(vec![ScriptedStreamer::ok(vec!["BUILD SUCCESSFUL"])]);
+        let device = emulator(Some("emulator-5554"));
+        let context = Context {
+            variant: Some("freeDebug"),
+            ..ctx(&device)
+        };
+
+        let _ = build_and_run(
+            &context,
+            &sys,
+            &streamer,
+            &mut Recorder::default(),
+            &CancelFlag::default(),
+        );
+
+        let specs = streamer.specs.borrow();
+        assert_eq!(
+            specs[0].args,
+            ["--console=plain", ":androidApp:installFreeDebug"]
+        );
     }
 }

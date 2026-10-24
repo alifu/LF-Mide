@@ -117,6 +117,7 @@ leader.
 | `C` | show the Git tab (files that differ from HEAD) |
 | `=` | diff of the file open in Neovim, against HEAD |
 | `A` | show or hide blame at the end of each line in Neovim |
+| `v` | choose what to build: a Gradle variant (`freeDebug`, ...) on Android, an Xcode scheme on iOS; remembered per project |
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
@@ -159,11 +160,15 @@ panel). Output streams into the Output panel while the build runs, and the statu
 task, then how it ended.
 
 - Android: `./gradlew :androidApp:installDebug` (or `:composeApp:`) for the chosen emulator, then the app is started
-  with its `applicationId`.
+  with its `applicationId`. With product flavors or extra build types, choose the variant with `v` (`freeDebug`,
+  `paidRelease`, ...): the picker reads them from the module's build file, and the task becomes `installFreeDebug`.
+  Several flavor dimensions are not supported yet.
 - iOS: `xcodebuild` for the chosen simulator, with build products in LF-Mide's own cache folder (not in your project),
-  then `simctl install` and `simctl launch`.
-- When the app is running, its log is followed automatically: `adb logcat` on Android, the simulator's log limited to
-  the app's process on iOS.
+  then `simctl install` and `simctl launch`. `v` picks the Xcode scheme (the one named like the project by default);
+  the `Debug` configuration is built.
+- While a build runs, the status bar shows a spinner, the step and how long it has taken.
+- When the app is running, its log is followed automatically: `adb logcat --pid=<the app>` on Android (the whole
+  device log if the app's process cannot be found), the simulator's log limited to the app's process on iOS.
 - Compiler errors and warnings are collected in the **Problems** tab. A failed build with errors opens it for you.
   `Enter` on a problem shows that file at that line in Neovim.
 - The build runs your project's own `gradlew` and Xcode project, so it only starts when you press `B`.
@@ -308,7 +313,7 @@ split mode.
 | Language | Server | Notes |
 |---|---|---|
 | Kotlin, Java | `kmp-lsp` | Fast (about 80 MB once its index is built; the first index of a project takes ~15 s and ~700 MB). It reads the code's structure without compiling it: members of your own classes, view models, data classes and constructor parameters complete; the Compose DSL (`Modifier.fillMaxWidth`, `LazyColumn`), chains (`Modifier.padding().`) and inferred types (`listOf(1).first`) mostly do not. Errors come from the Gradle build (Problems tab) |
-| Swift, Objective-C | `sourcekit-lsp` | Needs `buildServer.json` in the project (see the doctor) |
+| Swift, Objective-C | `sourcekit-lsp` | Needs `buildServer.json` in the project: `lf-mide swift-setup --apply` writes it (needs `xcode-build-server`) |
 
 The official JetBrains `kotlin-lsp` gives no completion for Kotlin Multiplatform projects yet, so it is not used.
 If you set up language servers in your own Neovim config, put `lsp = false` in LF-Mide's config to avoid running two.
@@ -347,7 +352,8 @@ lf-mide doctor --json               # machine-readable
 It covers the Android SDK (`adb`, emulator, `sdkmanager`, build-tools, platforms, system images, AVDs), JDK,
 Gradle wrapper, Xcode (selected developer dir, license, first launch), iOS simulator runtimes, Neovim and language
 servers, the terminal, `gradle.properties` heap sizes against your RAM, the `buildServer.json` used for Swift
-completion, and free disk space. Android Studio is reported as optional. The command exits with `1` if something
+completion (`lf-mide swift-setup` writes it), on macOS whether Ctrl-Space is taken by the input-source shortcut and whether
+iTerm2 sends Cmd-Shift-O, and free disk space. Android Studio is reported as optional. The command exits with `1` if something
 required is missing (warnings do not fail it) and never installs or changes anything.
 
 Tools are located through your `PATH`, `ANDROID_HOME` / `ANDROID_SDK_ROOT`, `JAVA_HOME` and the default
@@ -379,6 +385,13 @@ Logs: `~/Library/Caches/lf-mide/lf-mide.<date>.log` (7 days kept). Set `LF_MIDE_
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+```
+
+End-to-end scenarios drive the real binary in a pseudo terminal (Python 3 standard library only; nothing touches your
+config, projects or devices, since builds use shim `gradlew`, `adb` and `emulator` scripts):
+
+```bash
+cargo build && python3 tests/e2e/run.py
 ```
 
 Workspace layout:

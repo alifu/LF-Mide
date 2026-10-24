@@ -148,7 +148,7 @@ fn build_server(ctx: &Ctx) -> Vec<CheckResult> {
             Status::Warn,
             "missing (add it and .compile to .gitignore)",
         )
-        .with_hint("xcode-build-server config -project iosApp/iosApp.xcodeproj -scheme iosApp")
+        .with_hint("lf-mide swift-setup --apply")
     };
     vec![result]
 }
@@ -331,10 +331,7 @@ mod tests {
         ));
 
         assert_eq!(missing.status, Status::Warn);
-        assert_eq!(
-            missing.hint.as_deref(),
-            Some("xcode-build-server config -project iosApp/iosApp.xcodeproj -scheme iosApp")
-        );
+        assert_eq!(missing.hint.as_deref(), Some("lf-mide swift-setup --apply"));
         assert!(missing.detail.contains(".gitignore"));
         assert_eq!(present.status, Status::Ok);
         assert!(run(build_server, &FakeSystem::new(), None).is_empty());

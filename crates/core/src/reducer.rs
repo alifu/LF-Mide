@@ -19,6 +19,7 @@ use crate::state::{
     AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
     MAX_TRANSITION_POLLS, Panel, Transition,
 };
+use crate::variant_reducer;
 
 /// Shown in the status bar while the leader waits for its next key.
 const LEADER_HINT: &str = "Leader: h j k l move focus · ? help · Esc cancel";
@@ -422,16 +423,29 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         Action::ToggleBlame => git_reducer::toggle_blame(state),
         Action::MarksStale => git_reducer::marks_stale(state),
         Action::EditorFileChanged(path) => git_reducer::editor_file_changed(state, path),
+        Action::Tick { millis } => output_reducer::tick(state, millis),
+        Action::OpenVariantPicker => variant_reducer::open(state),
+        Action::VariantPickerMove(delta) => variant_reducer::step(state, delta),
+        Action::VariantPickerSelect => variant_reducer::select(state),
+        Action::VariantPickerCancel => variant_reducer::cancel(state),
+        Action::VariantsLoaded { platform, result } => {
+            variant_reducer::loaded(state, platform, result)
+        }
         Action::PrefsLoaded(prefs) => {
             let mut selected_devices = state.selected_devices.clone();
+            let mut variants = state.variants.clone();
             for platform in Platform::ALL {
                 if let Some(id) = prefs.device_for(platform) {
                     selected_devices.insert(platform, id.to_string());
+                }
+                if let Some(variant) = prefs.variant_for(platform) {
+                    variants.insert(platform, variant.to_string());
                 }
             }
             AppState {
                 target: prefs.target.unwrap_or(state.target),
                 selected_devices,
+                variants,
                 ..state
             }
         }
@@ -2097,6 +2111,7 @@ mod tests {
             target: Some(Platform::Ios),
             android_device: Some("Tablet".into()),
             ios_device: Some("33333333-3333-3333-3333-333333333333".into()),
+            ..ProjectPrefs::default()
         };
 
         let loaded = reduce(state(), Action::PrefsLoaded(prefs));

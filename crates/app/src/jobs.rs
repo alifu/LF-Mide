@@ -7,7 +7,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use lf_mide_build::{
-    CancelFlag, Context, ProcessStreamer, Report, Streamer, build_and_run, log_spec, stop_app,
+    CancelFlag, Context, ProcessStreamer, Report, Streamer, build_and_run, list_variants, log_spec,
+    stop_app,
 };
 use lf_mide_core::{
     Action, AppState, BuildRequest, Job, LogRequest, Platform, ProjectLayout, prefs_file_name,
@@ -136,6 +137,14 @@ impl JobRunner {
                     cancel.cancel();
                 }
             }
+            Job::LoadVariants(platform) => {
+                let (root, layout, tx) = (env.root.clone(), env.layout, env.tx.clone());
+                std::thread::spawn(move || {
+                    let sys = SystemRunner::with_timeout(TOOL_TIMEOUT);
+                    let result = list_variants(platform, &root, layout, &sys);
+                    let _ = tx.send(Action::VariantsLoaded { platform, result });
+                });
+            }
             Job::StartLogs(request) => self.start_logs(request, env),
             Job::StopApp(request) => {
                 let tx = env.tx.clone();
@@ -260,6 +269,7 @@ fn run_build(request: BuildRequest, env: &JobEnv, streamer: &ProcessStreamer, ca
         layout: env.layout,
         derived_data: &env.derived_data,
         device: &request.device,
+        variant: request.variant.as_deref(),
     };
     let mut report = ChannelReport {
         id: request.id,
@@ -284,7 +294,12 @@ fn run_logs(request: LogRequest, env: &JobEnv, streamer: &ProcessStreamer, cance
         });
     };
     let sys = SystemRunner::with_timeout(TOOL_TIMEOUT);
-    let spec = match log_spec(&request.device, &env.derived_data, &sys) {
+    let spec = match log_spec(
+        &request.device,
+        request.app_id.as_deref(),
+        &env.derived_data,
+        &sys,
+    ) {
         Ok(spec) => spec,
         Err(reason) => return ended(Some(reason)),
     };
@@ -428,7 +443,11 @@ mod tests {
         };
 
         run_logs(
-            LogRequest { id: 9, device },
+            LogRequest {
+                id: 9,
+                device,
+                app_id: None,
+            },
             &env,
             &ProcessStreamer::default(),
             &CancelFlag::default(),

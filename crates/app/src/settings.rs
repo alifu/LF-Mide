@@ -211,6 +211,8 @@ mod tests {
             target: Some(Platform::Ios),
             android_device: Some("Medium_Phone_API_36".into()),
             ios_device: Some("23F0A11F-0DD8-4766-853D-987DE9852BAC".into()),
+            android_variant: Some("freeDebug".into()),
+            ios_variant: None,
         }
     }
 
