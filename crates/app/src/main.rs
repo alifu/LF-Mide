@@ -6,6 +6,7 @@ mod doctor_cmd;
 mod editor;
 mod effects;
 mod event_loop;
+mod git_effects;
 mod jobs;
 mod keymap;
 mod paths;
@@ -15,7 +16,7 @@ mod settings;
 use clap::Parser;
 use color_eyre::Result;
 use color_eyre::eyre::WrapErr;
-use lf_mide_core::{AppState, Config, project};
+use lf_mide_core::{Action, AppState, Config, project, reduce};
 use lf_mide_doctor::checks::CHECK_THREAD_NAME;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -54,7 +55,12 @@ async fn main() -> Result<()> {
 
     let terminal = ratatui::try_init().wrap_err("cannot set up the terminal")?;
     exit_on_panic();
-    let result = event_loop::run(terminal, AppState::new(project, config)).await;
+    let mut state = AppState::new(project, config);
+    if let Some(socket) = attached_socket(cli.nvim_socket) {
+        state = reduce(state, Action::EditorOpened(socket));
+        state.status = Some("Attached to your Neovim".to_string());
+    }
+    let result = event_loop::run(terminal, state).await;
     ratatui::restore();
     drop(log_guard);
     // Returning from `main` would wait for device listings still running on
@@ -64,6 +70,16 @@ async fn main() -> Result<()> {
         std::process::exit(0);
     }
     result
+}
+
+/// The Neovim socket named on the command line, made absolute (the app may
+/// be started from another directory than the one the user typed it in).
+fn attached_socket(given: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+    let given = given?;
+    if given.is_absolute() {
+        return Some(given);
+    }
+    std::env::current_dir().ok().map(|here| here.join(given))
 }
 
 /// ratatui's panic hook restores the terminal, but a panic inside a tokio
@@ -115,6 +131,21 @@ fn is_contained_panic(thread_name: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relative_socket_path_is_made_absolute_and_an_absolute_one_kept() {
+        let here = std::env::current_dir().unwrap();
+
+        assert_eq!(attached_socket(None), None);
+        assert_eq!(
+            attached_socket(Some("/tmp/nvim.sock".into())),
+            Some("/tmp/nvim.sock".into())
+        );
+        assert_eq!(
+            attached_socket(Some("n.sock".into())),
+            Some(here.join("n.sock"))
+        );
+    }
 
     #[test]
     fn only_doctor_check_threads_are_contained() {

@@ -23,6 +23,13 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if state.output_filter.editing {
         return filter_key(key);
     }
+    if let Some(view) = &state.diff {
+        return if view.picker.is_some() {
+            base_picker_key(key.code)
+        } else {
+            diff_key(state, key.code)
+        };
+    }
     if state.terminal_picker.is_some() {
         return picker_key(key.code);
     }
@@ -74,6 +81,9 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
         KeyCode::Char('t') => Some(Action::ToggleTarget),
         KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
         KeyCode::Char('i') => Some(Action::ToggleInfo),
+        KeyCode::Char('C') => Some(Action::ShowGit),
+        KeyCode::Char('=') => Some(Action::OpenDiffCurrent),
+        KeyCode::Char('A') => Some(Action::ToggleBlame),
         KeyCode::Char('p') => Some(Action::TogglePerfPanel),
         KeyCode::Char('P') => Some(Action::TogglePerfIndicator),
         KeyCode::Char('D') => Some(Action::ToggleDoctor),
@@ -131,12 +141,61 @@ fn output_key(state: &AppState, code: KeyCode) -> Option<Action> {
         KeyCode::Char('c') => Some(Action::ClearOutput),
         KeyCode::Char('F') => Some(Action::FilterOpen),
         KeyCode::Char('v') => Some(Action::CycleLogLevel),
+        KeyCode::Enter if state.output_tab == OutputTab::Git => Some(Action::OpenDiffSelected),
+        KeyCode::Char('o') if state.output_tab == OutputTab::Git => {
+            Some(match state.git_changes.get(state.git_selected) {
+                Some(change) => Action::OpenFile {
+                    path: change.path.clone(),
+                    line: None,
+                },
+                None => Action::Status("No changed file selected".to_string()),
+            })
+        }
+        KeyCode::Char('r') if state.output_tab == OutputTab::Git => Some(Action::RefreshGit),
         KeyCode::Enter if state.output_tab == OutputTab::Problems => {
             Some(match state.selected_problem_target() {
                 Ok((path, line)) => Action::OpenFile { path, line },
                 Err(message) => Action::Status(message),
             })
         }
+        _ => None,
+    }
+}
+
+/// Keys while the diff overlay is open.
+fn diff_key(state: &AppState, code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc => Some(Action::DiffClose),
+        KeyCode::Char('q') => Some(Action::Quit),
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::DiffScroll(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::DiffScroll(-1)),
+        KeyCode::PageDown | KeyCode::Char(' ') => Some(Action::DiffScroll(i32::from(PAGE_LINES))),
+        KeyCode::PageUp => Some(Action::DiffScroll(-i32::from(PAGE_LINES))),
+        KeyCode::Char('g') => Some(Action::DiffScroll(i32::MIN)),
+        KeyCode::Char('G') => Some(Action::DiffScroll(i32::MAX)),
+        KeyCode::Char('n') => Some(Action::DiffHunk(1)),
+        KeyCode::Char('N') => Some(Action::DiffHunk(-1)),
+        KeyCode::Char('s') => Some(Action::DiffLayout),
+        KeyCode::Char('b') => Some(Action::BasePickerOpen),
+        KeyCode::Enter | KeyCode::Char('o') => {
+            let view = state.diff.as_ref()?;
+            Some(Action::OpenFile {
+                path: view.path.clone(),
+                line: view.current_line(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Keys while choosing what the diff is taken against.
+fn base_picker_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc => Some(Action::BasePickerCancel),
+        KeyCode::Enter => Some(Action::BasePickerSelect),
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::BasePickerMove(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::BasePickerMove(-1)),
+        KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
 }
@@ -418,6 +477,116 @@ mod tests {
         assert!(
             matches!(action(&s, KeyCode::Enter), Some(Action::Status(m)) if m.contains("no source location"))
         );
+    }
+
+    fn with_diff() -> AppState {
+        let mut s = closed();
+        s.current_file = Some(PathBuf::from("src/App.kt"));
+        let s = reduce(s, Action::OpenDiffCurrent);
+        let id = s.diff.as_ref().unwrap().id;
+        reduce(
+            s,
+            Action::DiffLoaded {
+                id,
+                result: Ok(std::sync::Arc::new(lf_mide_core::FileDiff {
+                    hunks: vec![lf_mide_core::Hunk {
+                        old_start: 1,
+                        old_lines: 1,
+                        new_start: 7,
+                        new_lines: 1,
+                        lines: vec![lf_mide_core::DiffLine {
+                            origin: lf_mide_core::LineOrigin::Added,
+                            text: "x".into(),
+                            old_no: None,
+                            new_no: Some(7),
+                        }],
+                    }],
+                    ..lf_mide_core::FileDiff::default()
+                })),
+            },
+        )
+    }
+
+    #[test]
+    fn git_keys_work_from_any_panel() {
+        assert_eq!(action(&closed(), KeyCode::Char('C')), Some(Action::ShowGit));
+        assert_eq!(
+            action(&closed(), KeyCode::Char('=')),
+            Some(Action::OpenDiffCurrent)
+        );
+        assert_eq!(
+            action(&closed(), KeyCode::Char('A')),
+            Some(Action::ToggleBlame)
+        );
+    }
+
+    #[test]
+    fn the_git_tab_opens_a_diff_or_the_file_and_refreshes() {
+        let mut s = bottom();
+        s.output_tab = OutputTab::Git;
+        s.git_changes = std::sync::Arc::new(vec![lf_mide_core::FileChange {
+            path: PathBuf::from("a.kt"),
+            kind: lf_mide_core::ChangeKind::Modified,
+            staged: false,
+            stamp: 1,
+        }]);
+
+        assert_eq!(action(&s, KeyCode::Enter), Some(Action::OpenDiffSelected));
+        assert_eq!(
+            action(&s, KeyCode::Char('o')),
+            Some(Action::OpenFile {
+                path: PathBuf::from("a.kt"),
+                line: None
+            })
+        );
+        assert_eq!(action(&s, KeyCode::Char('r')), Some(Action::RefreshGit));
+        let empty = AppState {
+            git_changes: Default::default(),
+            ..s
+        };
+        assert!(matches!(
+            action(&empty, KeyCode::Char('o')),
+            Some(Action::Status(_))
+        ));
+    }
+
+    #[test]
+    fn the_diff_overlay_scrolls_jumps_and_opens_the_file_at_the_change() {
+        let s = with_diff();
+
+        assert_eq!(action(&s, KeyCode::Char('j')), Some(Action::DiffScroll(1)));
+        assert_eq!(action(&s, KeyCode::PageUp), Some(Action::DiffScroll(-10)));
+        assert_eq!(action(&s, KeyCode::Char('n')), Some(Action::DiffHunk(1)));
+        assert_eq!(action(&s, KeyCode::Char('N')), Some(Action::DiffHunk(-1)));
+        assert_eq!(action(&s, KeyCode::Char('s')), Some(Action::DiffLayout));
+        assert_eq!(action(&s, KeyCode::Char('b')), Some(Action::BasePickerOpen));
+        assert_eq!(action(&s, KeyCode::Esc), Some(Action::DiffClose));
+        assert_eq!(
+            action(&s, KeyCode::Enter),
+            Some(Action::OpenFile {
+                path: PathBuf::from("src/App.kt"),
+                line: Some(7)
+            })
+        );
+        assert_eq!(
+            action(&s, KeyCode::Char('B')),
+            None,
+            "the overlay swallows other keys"
+        );
+        assert_eq!(action(&s, KeyCode::Char('q')), Some(Action::Quit));
+    }
+
+    #[test]
+    fn the_base_picker_has_its_own_keys() {
+        let s = reduce(with_diff(), Action::BasePickerOpen);
+
+        assert_eq!(
+            action(&s, KeyCode::Char('j')),
+            Some(Action::BasePickerMove(1))
+        );
+        assert_eq!(action(&s, KeyCode::Enter), Some(Action::BasePickerSelect));
+        assert_eq!(action(&s, KeyCode::Esc), Some(Action::BasePickerCancel));
+        assert_eq!(action(&s, KeyCode::Char('n')), None);
     }
 
     #[test]

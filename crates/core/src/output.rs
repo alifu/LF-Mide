@@ -2,8 +2,10 @@
 //! background jobs the reducer asks the app to run.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use crate::devices::{Device, Platform};
+use crate::git::BaseRef;
 use crate::perf::ProcessKind;
 
 /// Lines kept per log; older ones are dropped.
@@ -276,6 +278,24 @@ pub enum Job {
     },
     StartLogs(LogRequest),
     StopLogs(Platform),
+    /// Compute the diff of `path` against `base`.
+    LoadDiff {
+        id: u64,
+        path: PathBuf,
+        base: BaseRef,
+    },
+    /// List what a diff can be taken against.
+    LoadBases,
+    /// Draw git signs (and blame) on `path` in Neovim.
+    SyncMarks {
+        socket: PathBuf,
+        path: PathBuf,
+        blame: bool,
+    },
+    /// Ask the Neovim on `socket` which file is current.
+    FollowEditor {
+        socket: PathBuf,
+    },
     /// Ask a watched process to end (after checking it is still that process).
     StopProcess {
         pid: u32,

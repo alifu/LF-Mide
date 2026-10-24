@@ -494,7 +494,13 @@ mod tests {
             ],
         );
         let asked = reduce(s, Action::PerfStop);
-        assert!(asked.status.as_deref().unwrap().starts_with("Press x again"));
+        assert!(
+            asked
+                .status
+                .as_deref()
+                .unwrap()
+                .starts_with("Press x again")
+        );
 
         let moved = reduce(asked.clone(), Action::PerfMove(1));
         let closed = reduce(asked, Action::TogglePerfPanel);

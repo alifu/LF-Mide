@@ -1,6 +1,16 @@
 //! Git integration for LF-Mide.
 
+mod blame;
+mod changes;
+mod diff;
+mod repo;
+
 use std::path::Path;
+
+pub use blame::{MAX_BLAME_LINES, blame_file};
+pub use changes::changes;
+pub use diff::{bases, diff_file};
+pub use repo::ProjectRepo;
 
 use git2::{ErrorCode, Repository, StatusOptions};
 use lf_mide_core::BranchInfo;

@@ -25,6 +25,15 @@ pub fn files_viewport_rows(terminal_height: u16) -> u16 {
         .max(1)
 }
 
+/// Rows around the diff overlay's lines: margins, borders, the title line
+/// and the hint line.
+pub const DIFF_CHROME_ROWS: u16 = 6;
+
+/// Diff rows that fit in the overlay.
+pub fn diff_viewport_rows(terminal_height: u16) -> u16 {
+    terminal_height.saturating_sub(DIFF_CHROME_ROWS).max(1)
+}
+
 /// Log lines that fit in the Output panel: its borders and tab line are
 /// not content.
 pub const OUTPUT_VIEWPORT_ROWS: usize = BOTTOM_ROWS as usize - BORDER_ROWS as usize - 1;

@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::devices::{Device, Platform, SdkInfo};
 use crate::doctor::Report;
+use crate::git::{BaseRef, FileChange, FileDiff};
 use crate::nav::{FileList, FileMatch, GrepHit};
 use crate::output::{BuildOutcome, OutputTab};
 use crate::perf::PerfSample;
@@ -181,4 +182,41 @@ pub enum Action {
     PerfMove(i16),
     /// Stop the highlighted process (asks for a second press first).
     PerfStop,
+    /// The repository was read: its HEAD and the files that differ from it.
+    GitLoaded {
+        head: Option<String>,
+        changes: Arc<Vec<FileChange>>,
+    },
+    /// Read the repository again now.
+    RefreshGit,
+    /// Show the Git tab of the Output panel.
+    ShowGit,
+    /// Diff the file highlighted in the Git tab.
+    OpenDiffSelected,
+    /// Diff the file shown in Neovim.
+    OpenDiffCurrent,
+    /// The diff for request `id` is ready (or why it is not).
+    DiffLoaded {
+        id: u64,
+        result: Result<Arc<FileDiff>, String>,
+    },
+    /// Scroll the diff by rows (positive goes down).
+    DiffScroll(i32),
+    /// Jump to the next (positive) or previous hunk.
+    DiffHunk(i32),
+    /// Switch between unified and side-by-side.
+    DiffLayout,
+    DiffClose,
+    /// Choose what the diff is taken against.
+    BasePickerOpen,
+    BasePickerMove(i16),
+    BasePickerSelect,
+    BasePickerCancel,
+    BasesLoaded(Arc<Vec<BaseRef>>),
+    /// Show or hide blame text in Neovim.
+    ToggleBlame,
+    /// The gutter could not be drawn in Neovim; try again at the next look.
+    MarksStale,
+    /// Neovim says this absolute path is its current file.
+    EditorFileChanged(Option<PathBuf>),
 }

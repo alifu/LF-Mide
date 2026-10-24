@@ -373,6 +373,14 @@ pub(crate) fn scroll(state: AppState, delta: i32) -> AppState {
             ..state
         };
     }
+    if tab == OutputTab::Git {
+        let last = state.git_changes.len().saturating_sub(1) as i64;
+        let selected = (state.git_selected as i64 - i64::from(delta)).clamp(0, last);
+        return AppState {
+            git_selected: selected as usize,
+            ..state
+        };
+    }
     let Some(len) = state.log(tab).map(|log| log.len()) else {
         return state;
     };

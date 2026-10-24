@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use crate::config::{Config, TerminalKind};
 use crate::devices::{Device, DeviceState, Platform, SdkInfo};
+use crate::diff_view::DiffView;
 use crate::doctor::Report;
+use crate::git::{BaseRef, FileChange};
+use crate::git_reducer::MarksKey;
 use crate::nav::{FileList, FileMatch, GrepHit, TreeRow};
 use crate::output::{BuildState, Job, LogBuffer, OutputFilter, OutputTab, Problem};
 use crate::perf::{PerfSample, StopRequest, Trend};
@@ -198,6 +201,23 @@ pub struct AppState {
     pub swap_trend: Trend,
     /// A swap warning was already shown for this stretch of high swap.
     pub swap_alerted: bool,
+    /// Files that differ from HEAD (project-relative), and HEAD's id.
+    pub git_changes: Arc<Vec<FileChange>>,
+    pub git_head: Option<String>,
+    /// False until the first look at the repository has finished.
+    pub git_loaded: bool,
+    pub git_selected: usize,
+    /// Show who last changed each line, at the end of the line in Neovim.
+    pub blame_on: bool,
+    /// The file Neovim is showing (project-relative), as far as we know.
+    pub current_file: Option<std::path::PathBuf>,
+    /// What the gutter in Neovim was last drawn from.
+    pub marks_key: Option<MarksKey>,
+    pub diff: Option<DiffView>,
+    /// What a diff can be taken against, once listed.
+    pub bases: Arc<Vec<BaseRef>>,
+    /// The chosen base (HEAD until the user picks another).
+    pub base: BaseRef,
 }
 
 /// A device log being followed.
@@ -236,6 +256,7 @@ impl AppState {
 
 impl AppState {
     pub fn new(project: Project, config: Config) -> Self {
+        let blame_on = config.show_blame;
         Self {
             project,
             config,
@@ -289,6 +310,16 @@ impl AppState {
             perf_confirm: None,
             swap_trend: Trend::Flat,
             swap_alerted: false,
+            git_changes: Arc::new(Vec::new()),
+            git_head: None,
+            git_loaded: false,
+            git_selected: 0,
+            blame_on,
+            current_file: None,
+            marks_key: None,
+            diff: None,
+            bases: Arc::new(Vec::new()),
+            base: BaseRef::head(),
         }
     }
 }

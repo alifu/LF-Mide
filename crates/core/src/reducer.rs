@@ -8,6 +8,7 @@ use crate::action::Action;
 use crate::config::{Config, TerminalKind};
 use crate::devices::{Device, DeviceState, Platform};
 use crate::doctor::{Report, popup_content_rows};
+use crate::git_reducer;
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
 use crate::nav::{parent_row, tree_rows};
 use crate::output_reducer;
@@ -129,18 +130,24 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         },
         Action::EditorOpened(socket) => AppState {
             editor_socket: Some(socket),
+            // A new Neovim starts without signs.
+            marks_key: None,
             // A new Neovim: its socket has not been proven yet.
             editor_ready: false,
             status: Some("Neovim opened in a split pane".to_string()),
             ..state
         },
-        Action::FileOpened(path) => AppState {
-            editor_ready: true,
-            status: Some(format!("Opened {}", path.display())),
-            ..state
-        },
+        Action::FileOpened(path) => git_reducer::file_shown(
+            AppState {
+                editor_ready: true,
+                status: Some(format!("Opened {}", path.display())),
+                ..state
+            },
+            path,
+        ),
         Action::EditorLost => AppState {
             editor_socket: None,
+            marks_key: None,
             editor_ready: false,
             status: Some("Neovim isn't running: press e to open it".to_string()),
             ..state
@@ -300,6 +307,24 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         Action::TogglePerfIndicator => perf_reducer::toggle_indicator(state),
         Action::PerfMove(delta) => perf_reducer::move_selection(state, delta),
         Action::PerfStop => perf_reducer::stop_selected(state),
+        Action::GitLoaded { head, changes } => git_reducer::git_loaded(state, head, changes),
+        Action::RefreshGit => state,
+        Action::ShowGit => git_reducer::show_git(state),
+        Action::OpenDiffSelected => git_reducer::open_diff_selected(state),
+        Action::OpenDiffCurrent => git_reducer::open_diff_current(state),
+        Action::DiffLoaded { id, result } => git_reducer::diff_loaded(state, id, result),
+        Action::DiffScroll(delta) => git_reducer::diff_scroll(state, delta),
+        Action::DiffHunk(delta) => git_reducer::diff_hunk(state, delta),
+        Action::DiffLayout => git_reducer::diff_layout(state),
+        Action::DiffClose => git_reducer::diff_close(state),
+        Action::BasePickerOpen => git_reducer::picker_open(state),
+        Action::BasePickerMove(delta) => git_reducer::picker_move(state, delta),
+        Action::BasePickerSelect => git_reducer::picker_select(state),
+        Action::BasePickerCancel => git_reducer::picker_cancel(state),
+        Action::BasesLoaded(bases) => git_reducer::bases_loaded(state, bases),
+        Action::ToggleBlame => git_reducer::toggle_blame(state),
+        Action::MarksStale => git_reducer::marks_stale(state),
+        Action::EditorFileChanged(path) => git_reducer::editor_file_changed(state, path),
         Action::PrefsLoaded(prefs) => {
             let mut selected_devices = state.selected_devices.clone();
             for platform in Platform::ALL {
@@ -416,6 +441,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 status: Some(format!("Opening {}…", path.display())),
                 finder: None,
                 grep: None,
+                diff: None,
                 ..state
             }
         }

@@ -4,7 +4,10 @@
 pub mod action;
 pub mod config;
 pub mod devices;
+pub mod diff_view;
 pub mod doctor;
+pub mod git;
+mod git_reducer;
 pub mod layout;
 pub mod logparse;
 pub mod nav;
@@ -24,9 +27,15 @@ pub use config::{Config, ConfigError, TerminalKind, set_terminal_in_config};
 pub use devices::{
     AndroidSdk, Device, DeviceState, Platform, SdkInfo, ToolInfo, XcodeSdk, display_path,
 };
+pub use diff_view::{DiffContent, DiffView, SideRow};
 pub use doctor::{
     Category, CheckResult, LineKind, Report, ReportLine, Status, popup_content_rows, popup_height,
 };
+pub use git::{
+    BaseKind, BaseRef, BlameLine, ChangeKind, DiffLine, FileChange, FileDiff, Hunk, LineMark,
+    LineOrigin, MarkKind, blame_text, hunk_lines, marks_from_diff, relative_time,
+};
+pub use git_reducer::MarksKey;
 pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
 pub use output::{
     BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LOG_CAPACITY, LogBuffer, LogLevel,

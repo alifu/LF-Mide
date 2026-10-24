@@ -72,7 +72,7 @@ pub(crate) fn render_output(frame: &mut Frame, area: Rect, state: &AppState) {
     }
     let lines = match state.output_tab {
         OutputTab::Problems => problem_lines(state, content.height.into(), content.width.into()),
-        OutputTab::Git => vec![muted("Git status and blame arrive in a later phase")],
+        OutputTab::Git => crate::git::change_lines(state, content.height.into()),
         tab => log_lines(state, tab, content.height.into()),
     };
     frame.render_widget(Paragraph::new(lines), content);

@@ -113,6 +113,8 @@ pub struct JobEnv {
 /// The builds and log streams that are running.
 #[derive(Default)]
 pub struct JobRunner {
+    /// Counts gutter updates so only the newest one is applied.
+    marks_sequence: Arc<std::sync::atomic::AtomicU64>,
     backlog: Backlog,
     streamer: ProcessStreamer,
     build: Option<(u64, CancelFlag)>,
@@ -135,6 +137,33 @@ impl JobRunner {
                 }
             }
             Job::StartLogs(request) => self.start_logs(request, env),
+            Job::LoadDiff { id, path, base } => {
+                crate::git_effects::spawn_load_diff(
+                    env.root.clone(),
+                    id,
+                    path,
+                    base,
+                    env.tx.clone(),
+                );
+            }
+            Job::LoadBases => {
+                crate::git_effects::spawn_load_bases(env.root.clone(), env.tx.clone())
+            }
+            Job::SyncMarks {
+                socket,
+                path,
+                blame,
+            } => crate::git_effects::spawn_sync_marks(
+                env.root.clone(),
+                socket,
+                path,
+                blame,
+                Arc::clone(&self.marks_sequence),
+                env.tx.clone(),
+            ),
+            Job::FollowEditor { socket } => {
+                crate::git_effects::spawn_follow_editor(socket, env.tx.clone());
+            }
             Job::StopProcess { pid, kind } => {
                 crate::perf_effects::spawn_stop_process(pid, kind, env.tx.clone());
             }

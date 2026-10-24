@@ -10,6 +10,11 @@ pub struct Cli {
     /// Path inside the Compose Multiplatform project (default: current directory).
     pub path: Option<PathBuf>,
 
+    /// Use a Neovim you already started (`nvim --listen PATH`) instead of
+    /// opening one with `e`.
+    #[arg(long, value_name = "PATH")]
+    pub nvim_socket: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -50,6 +55,15 @@ mod tests {
 
         assert!(cli.command.is_none());
         assert_eq!(cli.path, None);
+    }
+
+    #[test]
+    fn an_existing_neovim_can_be_named() {
+        let cli = parse(&["--nvim-socket", "/tmp/nvim.sock", "/work/pos"]);
+
+        assert_eq!(cli.nvim_socket, Some(PathBuf::from("/tmp/nvim.sock")));
+        assert_eq!(cli.path, Some(PathBuf::from("/work/pos")));
+        assert_eq!(parse(&[]).nvim_socket, None);
     }
 
     #[test]

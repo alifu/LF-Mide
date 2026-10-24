@@ -2,6 +2,7 @@
 //! [`AppState`]; nothing in this crate changes state.
 
 mod devices;
+mod git;
 mod output;
 mod perf;
 mod search;
@@ -66,6 +67,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     search::render_grep(frame, state);
     devices::render_info(frame, state);
     perf::render_perf(frame, state);
+    git::render_diff(frame, state);
 }
 
 /// Who will host Neovim: the configured terminal, or what `Auto` found.
@@ -281,6 +283,9 @@ fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
         format!(" {} ", branch_text(state)),
         Style::new().fg(ACCENT),
     )];
+    if state.blame_on {
+        spans.push(Span::styled("│ blame ", Style::new().fg(ACCENT)));
+    }
     if let Some((text, color)) = perf::indicator(state) {
         spans.push(Span::styled(format!("│ {text} "), Style::new().fg(color)));
     }

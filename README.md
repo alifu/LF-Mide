@@ -85,6 +85,9 @@ Keys so far:
 | `o` | focus the Output panel |
 | `p` | open the Perf panel (memory and the dev processes using it) |
 | `P` | show or hide the RAM / swap indicator in the status bar |
+| `C` | show the Git tab (files that differ from HEAD) |
+| `=` | diff of the file open in Neovim, against HEAD |
+| `A` | show or hide blame at the end of each line in Neovim |
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
@@ -130,6 +133,27 @@ In the Output panel (`o`): `h`/`l` or `[`/`]` change tab, `1`-`5` jump to a tab,
 the oldest line, `G` follows new output again, `c` clears the tab, `F` filters the log by text (`Enter` keeps it, `Esc`
 drops it), `v` shows only louder Logcat lines (Debug, Info, Warn, Error, then all again).
 Each log keeps the newest 20,000 lines.
+
+## Git: new code, old code and blame
+
+LF-Mide shows what changed in the project without leaving the terminal, and draws it inside your Neovim.
+
+- **Gutter:** in the file Neovim is showing, lines that are new get a green bar, lines that replace others an amber bar,
+  and a red mark shows where lines were taken away. It is drawn from the file on disk, so it is current after a save,
+  and LF-Mide notices a changed file within a few seconds (and follows you when you switch files in Neovim).
+- **Blame (`A`):** at the end of each line, `author · 3 days ago · a1b2c3d`. Lines you changed since the last commit read
+  "Not committed yet". Off by default; set `show_blame = true` in the config to start with it on.
+- **Git tab (`C`):** every file that differs from HEAD, with M (modified), A (added), D (deleted), R (renamed),
+  ? (untracked) and U (conflict); a `+` in front means staged. `j`/`k` choose, `Enter` opens the diff, `o` opens the file
+  in Neovim, `r` re-reads the repository.
+- **Diff (`Enter` in the Git tab, or `=` for the current file):** a full-screen view of the new text against the old.
+  `s` switches between unified and side by side, `j`/`k`/`PageUp`/`PageDown`/`g`/`G` scroll, `n`/`N` jump to the next or
+  previous change, `Enter` or `o` opens the file in Neovim at that change, `Esc` closes. `b` chooses what to compare
+  against: HEAD, a branch, or one of the last 15 commits.
+
+LF-Mide needs to know which Neovim to talk to: open one with `e`, or start your own with `nvim --listen /tmp/nvim.sock`
+and run `lf-mide --nvim-socket /tmp/nvim.sock`. Commit messages, author names and file contents come from the
+repository, so control characters are removed before they reach your screen or Neovim.
 
 ## Performance status
 
@@ -245,7 +269,7 @@ crates/
 ├── system/           # running commands / reading the machine behind a trait (shared, testable)
 ├── terminal/         # terminal detection and split-pane launching
 ├── ui/               # ratatui rendering (pure view of the state)
-└── vcs/              # git: branch, dirty state
+└── vcs/              # git: branch, changed files, diff, blame
 spikes/
 └── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
 ```

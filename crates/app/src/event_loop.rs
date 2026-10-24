@@ -14,7 +14,9 @@ use std::time::Duration;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::{branch_watch, editor, effects, jobs, keymap, paths, perf_effects, settings};
+use crate::{
+    branch_watch, editor, effects, git_effects, jobs, keymap, paths, perf_effects, settings,
+};
 
 /// The first AppleScript call may wait for the user to allow access.
 const EDITOR_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -48,6 +50,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         tx: tx.clone(),
     };
     let mut quit_signals = QuitSignals::install();
+    let git_watch = git_effects::spawn_git_watch(state.project.root.clone(), tx.clone());
     let perf_visible = Arc::new(AtomicBool::new(state.config.show_perf));
     let perf_watch = perf_effects::spawn_perf_watch(
         tx.clone(),
@@ -87,6 +90,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         let was_running = state.doctor == DoctorPanel::Running;
         let scan_was_running = state.files_loading;
         let refresh_devices = actions.iter().any(|a| matches!(a, Action::RefreshDevices));
+        let refresh_git = actions.iter().any(|a| matches!(a, Action::RefreshGit));
         let grep_finished = actions
             .iter()
             .any(|a| matches!(a, Action::GrepResults { .. }));
@@ -117,6 +121,9 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         }
         if refresh_devices {
             effects::spawn_device_listing(tx.clone());
+        }
+        if refresh_git {
+            git_effects::spawn_git_refresh(state.project.root.clone(), tx.clone());
         }
         perf_visible.store(state.config.show_perf || state.perf_open, Ordering::Relaxed);
         // Builds and log streams the user asked for.
@@ -168,6 +175,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     watcher.abort();
     device_watch.abort();
     perf_watch.abort();
+    git_watch.abort();
     result
 }
 
