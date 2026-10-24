@@ -11,6 +11,7 @@ use crate::doctor::{Report, popup_content_rows};
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
 use crate::nav::{parent_row, tree_rows};
 use crate::output_reducer;
+use crate::perf_reducer;
 use crate::state::{
     AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
     MAX_TRANSITION_POLLS, Transition,
@@ -294,6 +295,11 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         Action::FilterDone => output_reducer::filter_done(state),
         Action::FilterClear => output_reducer::filter_clear(state),
         Action::CycleLogLevel => output_reducer::cycle_level(state),
+        Action::PerfSampled(sample) => perf_reducer::sampled(state, sample),
+        Action::TogglePerfPanel => perf_reducer::toggle_panel(state),
+        Action::TogglePerfIndicator => perf_reducer::toggle_indicator(state),
+        Action::PerfMove(delta) => perf_reducer::move_selection(state, delta),
+        Action::PerfStop => perf_reducer::stop_selected(state),
         Action::PrefsLoaded(prefs) => {
             let mut selected_devices = state.selected_devices.clone();
             for platform in Platform::ALL {
@@ -605,6 +611,15 @@ fn start_or_stop(state: AppState, action: DeviceAction) -> AppState {
             ..state
         };
     };
+    start_or_stop_device(state, device, action)
+}
+
+/// Starts or stops `device` (not necessarily the selected one).
+pub(crate) fn start_or_stop_device(
+    state: AppState,
+    device: Device,
+    action: DeviceAction,
+) -> AppState {
     let refusal = match (action, device.state) {
         (DeviceAction::Boot, DeviceState::Stopped) | (DeviceAction::Stop, DeviceState::Running) => {
             None

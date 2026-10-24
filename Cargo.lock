@@ -995,6 +995,7 @@ dependencies = [
  "lf-mide-doctor",
  "lf-mide-editor",
  "lf-mide-nav",
+ "lf-mide-perf",
  "lf-mide-platform",
  "lf-mide-system",
  "lf-mide-terminal",
@@ -1063,6 +1064,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lf-mide-perf"
+version = "0.1.0"
+dependencies = [
+ "lf-mide-core",
+ "lf-mide-system",
 ]
 
 [[package]]

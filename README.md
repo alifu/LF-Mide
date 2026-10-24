@@ -83,6 +83,8 @@ Keys so far:
 | `s` | cancel the build |
 | `L` | follow (or stop following) the chosen device's log |
 | `o` | focus the Output panel |
+| `p` | open the Perf panel (memory and the dev processes using it) |
+| `P` | show or hide the RAM / swap indicator in the status bar |
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
@@ -128,6 +130,32 @@ In the Output panel (`o`): `h`/`l` or `[`/`]` change tab, `1`-`5` jump to a tab,
 the oldest line, `G` follows new output again, `c` clears the tab, `F` filters the log by text (`Enter` keeps it, `Esc`
 drops it), `v` shows only louder Logcat lines (Debug, Info, Warn, Error, then all again).
 Each log keeps the newest 20,000 lines.
+
+## Performance status
+
+The status bar shows `RAM used/total · swap X` (with ▲/▼ when swap is growing or shrinking). It is green normally,
+yellow when macOS reports memory pressure "warn" or swap is at least 2 GB, and red on "critical" pressure or 4 GB of
+swap. When swap first gets high, LF-Mide suggests the cheapest thing to give back, usually the Gradle daemon.
+
+`p` opens the Perf panel: RAM, pressure, swap and free disk, then the processes that matter, biggest first: Gradle and
+Kotlin daemons, `kotlin-lsp`, the Android emulator (named by its AVD), iOS simulators (named by device, all their
+processes added up), Neovim, LF-Mide itself, and Android Studio / Xcode if you left them open. Memory is each
+process's footprint (what Activity Monitor shows), not resident size, which counts shared pages many times over.
+
+In the panel `j`/`k` move (the highlight stays on its process while the list re-sorts), `x` stops the highlighted
+helper: press it twice to confirm. Daemons and the language server get SIGTERM after LF-Mide re-checks the process
+is still the one you saw; an emulator or simulator is shut down the normal way. Editors, IDEs and LF-Mide itself are
+never offered for stopping.
+
+Samples are taken every 2 seconds, and not at all while both the indicator and the panel are hidden. Settings
+(`~/.config/lf-mide/config.toml` or `.lfmide.toml`):
+
+```toml
+show_perf = true           # the status-bar indicator
+perf_interval_secs = 2     # 1 to 60
+swap_warn_mb = 2048        # indicator turns yellow
+swap_critical_mb = 4096    # and red
+```
 
 ## Navigating the project
 
@@ -212,6 +240,7 @@ crates/
 ├── doctor/           # dependency checks behind `lf-mide doctor`
 ├── editor/           # shows a file in the running Neovim over its RPC socket
 ├── nav/              # project scan, fuzzy finder, ripgrep search
+├── perf/             # memory, swap, disk and dev-process sampling (macOS)
 ├── platform/         # Android SDK / emulators and Xcode / simulators: list, boot, stop
 ├── system/           # running commands / reading the machine behind a trait (shared, testable)
 ├── terminal/         # terminal detection and split-pane launching

@@ -74,6 +74,14 @@ pub trait System: Sync {
     fn canonicalize(&self, path: &Path) -> Option<PathBuf>;
     fn home(&self) -> Option<PathBuf>;
 
+    /// Memory the process really holds (macOS "physical footprint", what
+    /// Activity Monitor shows), in bytes. Unlike resident size it does not
+    /// count shared pages once per process. `None` when unknown or not ours
+    /// to ask about.
+    fn footprint(&self, _pid: u32) -> Option<u64> {
+        None
+    }
+
     /// First match for `name` on `$PATH`.
     fn which(&self, name: &str) -> Option<PathBuf> {
         let path = self.env("PATH")?;
@@ -269,6 +277,22 @@ impl System for SystemRunner {
 
     fn home(&self) -> Option<PathBuf> {
         std::env::var_os("HOME").map(PathBuf::from)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn footprint(&self, pid: u32) -> Option<u64> {
+        let pid = libc::c_int::try_from(pid).ok()?;
+        // SAFETY: `info` is a plain-data struct the kernel fills in; the
+        // buffer type is the C `rusage_info_t` pointer the call expects.
+        let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
+        let status = unsafe {
+            libc::proc_pid_rusage(
+                pid,
+                libc::RUSAGE_INFO_V2,
+                (&raw mut info).cast::<libc::rusage_info_t>(),
+            )
+        };
+        (status == 0).then_some(info.ri_phys_footprint)
     }
 }
 

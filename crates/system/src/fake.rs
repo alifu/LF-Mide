@@ -17,6 +17,7 @@ pub struct FakeSystem {
     spawn_errors: HashMap<String, RunError>,
     /// (link, target): any path under `link` canonicalizes under `target`.
     symlinks: Vec<(PathBuf, PathBuf)>,
+    footprints: HashMap<u32, u64>,
 }
 
 fn key(program: &str, args: &[&str]) -> String {
@@ -125,6 +126,12 @@ impl FakeSystem {
         self
     }
 
+    /// The memory footprint `footprint(pid)` reports.
+    pub fn footprint_of(mut self, pid: u32, bytes: u64) -> Self {
+        self.footprints.insert(pid, bytes);
+        self
+    }
+
     pub fn dir(mut self, path: &str, entries: &[&str]) -> Self {
         let names = entries.iter().map(|s| s.to_string()).collect();
         self.dirs.insert(PathBuf::from(path), names);
@@ -188,6 +195,10 @@ impl System for FakeSystem {
 
     fn home(&self) -> Option<PathBuf> {
         self.home.clone()
+    }
+
+    fn footprint(&self, pid: u32) -> Option<u64> {
+        self.footprints.get(&pid).copied()
     }
 }
 

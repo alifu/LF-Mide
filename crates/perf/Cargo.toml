@@ -1,0 +1,15 @@
+[package]
+name = "lf-mide-perf"
+version.workspace = true
+edition.workspace = true
+description = "LF-Mide performance sampling: memory, swap, disk and the dev processes (macOS)"
+
+[dependencies]
+lf-mide-core.workspace = true
+lf-mide-system.workspace = true
+
+[dev-dependencies]
+lf-mide-system = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

@@ -29,6 +29,9 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if state.info_open {
         return info_key(key.code);
     }
+    if state.perf_open {
+        return perf_key(key.code);
+    }
     match state.doctor {
         DoctorPanel::Closed => main_key(state, key.code, ctrl),
         DoctorPanel::Running | DoctorPanel::Ready(_) => doctor_key(key.code),
@@ -71,6 +74,8 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
         KeyCode::Char('t') => Some(Action::ToggleTarget),
         KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
         KeyCode::Char('i') => Some(Action::ToggleInfo),
+        KeyCode::Char('p') => Some(Action::TogglePerfPanel),
+        KeyCode::Char('P') => Some(Action::TogglePerfIndicator),
         KeyCode::Char('D') => Some(Action::ToggleDoctor),
         KeyCode::Char('T') => Some(Action::OpenTerminalPicker),
         KeyCode::Char('e') => Some(Action::OpenEditor),
@@ -132,6 +137,18 @@ fn output_key(state: &AppState, code: KeyCode) -> Option<Action> {
                 Err(message) => Action::Status(message),
             })
         }
+        _ => None,
+    }
+}
+
+/// Keys while the performance panel is open.
+fn perf_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('p') => Some(Action::TogglePerfPanel),
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::PerfMove(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::PerfMove(-1)),
+        KeyCode::Char('x') => Some(Action::PerfStop),
+        KeyCode::Char('q') => Some(Action::Quit),
         _ => None,
     }
 }
@@ -400,6 +417,37 @@ mod tests {
         s.problem_selected = 1;
         assert!(
             matches!(action(&s, KeyCode::Enter), Some(Action::Status(m)) if m.contains("no source location"))
+        );
+    }
+
+    #[test]
+    fn the_performance_panel_has_its_own_keys() {
+        let open = reduce(closed(), Action::TogglePerfPanel);
+
+        assert_eq!(
+            action(&closed(), KeyCode::Char('p')),
+            Some(Action::TogglePerfPanel)
+        );
+        assert_eq!(
+            action(&closed(), KeyCode::Char('P')),
+            Some(Action::TogglePerfIndicator)
+        );
+        assert_eq!(
+            action(&open, KeyCode::Char('p')),
+            Some(Action::TogglePerfPanel)
+        );
+        assert_eq!(action(&open, KeyCode::Esc), Some(Action::TogglePerfPanel));
+        assert_eq!(action(&open, KeyCode::Char('j')), Some(Action::PerfMove(1)));
+        assert_eq!(
+            action(&open, KeyCode::Char('k')),
+            Some(Action::PerfMove(-1))
+        );
+        assert_eq!(action(&open, KeyCode::Char('x')), Some(Action::PerfStop));
+        assert_eq!(action(&open, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            action(&open, KeyCode::Char('B')),
+            None,
+            "the panel swallows other keys"
         );
     }
 

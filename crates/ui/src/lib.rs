@@ -3,6 +3,7 @@
 
 mod devices;
 mod output;
+mod perf;
 mod search;
 #[cfg(test)]
 mod testing;
@@ -64,6 +65,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     search::render_finder(frame, state);
     search::render_grep(frame, state);
     devices::render_info(frame, state);
+    perf::render_perf(frame, state);
 }
 
 /// Who will host Neovim: the configured terminal, or what `Auto` found.
@@ -279,6 +281,9 @@ fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
         format!(" {} ", branch_text(state)),
         Style::new().fg(ACCENT),
     )];
+    if let Some((text, color)) = perf::indicator(state) {
+        spans.push(Span::styled(format!("│ {text} "), Style::new().fg(color)));
+    }
     if let Some((summary, color)) = output::build_summary(state) {
         spans.push(Span::styled(
             format!("│ {summary} "),

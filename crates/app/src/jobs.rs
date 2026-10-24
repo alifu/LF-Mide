@@ -135,6 +135,9 @@ impl JobRunner {
                 }
             }
             Job::StartLogs(request) => self.start_logs(request, env),
+            Job::StopProcess { pid, kind } => {
+                crate::perf_effects::spawn_stop_process(pid, kind, env.tx.clone());
+            }
             Job::StopLogs(platform) => {
                 if let Some((_, cancel)) = self.logs.remove(&platform) {
                     cancel.cancel();

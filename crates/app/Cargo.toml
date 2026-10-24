@@ -19,6 +19,7 @@ lf-mide-core.workspace = true
 lf-mide-doctor.workspace = true
 lf-mide-editor.workspace = true
 lf-mide-nav.workspace = true
+lf-mide-perf.workspace = true
 lf-mide-platform.workspace = true
 lf-mide-system.workspace = true
 lf-mide-terminal.workspace = true

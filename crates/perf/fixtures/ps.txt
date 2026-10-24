@@ -1,0 +1,20 @@
+    1     0  19472   0.1 /sbin/launchd
+  334     1  25664   0.0 /usr/libexec/logd
+ 4121  3990 1887436   3.2 /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java --add-opens=java.base/java.util=ALL-UNNAMED -Xmx2g -Dfile.encoding=UTF-8 -cp /Users/me/.gradle/wrapper/dists/gradle-8.14-bin/abc/gradle-8.14/lib/gradle-daemon-main-8.14.jar -javaagent:/x.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.14
+ 4188  4121  942080   0.4 /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java -Xmx1g -cp /Users/me/.m2/kotlin-compiler-embeddable.jar org.jetbrains.kotlin.daemon.KotlinCompileDaemon --daemon-runFilesPath /Users/me/.kotlin/daemon
+ 3990     1 1258291   1.0 /Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home/bin/java -cp /opt/homebrew/Cellar/kotlin-lsp/0.253/lib/kotlin-lsp.jar com.jetbrains.ls.kotlinLsp.KotlinLspServerKt --stdio
+ 5002  4999 2201600  12.0 /Users/me/Library/Android/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd Pixel_8_API_35 -netdelay none
+ 5001     1   30000   0.0 /Users/me/Library/Android/sdk/emulator/emulator -avd Pixel_8_API_35
+48452     1   13616   0.0 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/23F0A11F-0DD8-4766-853D-987DE9852BAC/data/var/run/launchd_bootstrap.plist
+ 1407 48452   77280   0.5 /Library/Developer/CoreSimulator/Volumes/iOS_23A343/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.0.simruntime/Contents/Resources/RuntimeRoot/usr/sbin/notifyd
+ 1408 48452   80256   1.5 /Library/Developer/CoreSimulator/Volumes/iOS_23A343/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 26.0.simruntime/Contents/Resources/RuntimeRoot/usr/libexec/backboardd
+ 6129 1407    55552   0.0 /System/Library/PrivateFrameworks/MapsSupport.framework/geocorrectiond
+48498     1   26720   0.0 /Applications/Xcode.app/Contents/Developer/Applications/Simulator.app/Contents/MacOS/Simulator -CurrentDeviceUDID 23F0A11F-0DD8-4766-853D-987DE9852BAC
+ 3801     1   49152   0.0 nvim --embed
+ 3802  3801    2000   0.0 /opt/homebrew/bin/nvim
+ 3790  3000   22528   1.0 /Users/me/code/LF-Mide/target/release/lf-mide /Users/me/proj
+ 7001     1 3145728  20.0 /Applications/Xcode.app/Contents/MacOS/Xcode
+ 7002     1 2097152   5.0 /Applications/Android Studio.app/Contents/MacOS/studio
+ 7003  7002 1048576   1.0 /Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java -Dfoo=bar
+ 8000   100    3000   0.0 /bin/zsh -c brew uninstall kotlin-lsp; grep GradleDaemon
+ 8001   100    3000   0.0 grep org.gradle.launcher.daemon.bootstrap.GradleDaemon

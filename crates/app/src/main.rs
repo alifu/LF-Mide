@@ -9,6 +9,7 @@ mod event_loop;
 mod jobs;
 mod keymap;
 mod paths;
+mod perf_effects;
 mod settings;
 
 use clap::Parser;

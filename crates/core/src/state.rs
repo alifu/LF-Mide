@@ -9,6 +9,7 @@ use crate::devices::{Device, DeviceState, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit, TreeRow};
 use crate::output::{BuildState, Job, LogBuffer, OutputFilter, OutputTab, Problem};
+use crate::perf::{PerfSample, StopRequest, Trend};
 use crate::prefs::ProjectPrefs;
 use crate::project::Project;
 
@@ -184,6 +185,19 @@ pub struct AppState {
     pub last_job_id: u64,
     /// Builds and log streams waiting to be started or stopped.
     pub pending_jobs: Vec<Job>,
+    /// The latest performance sample, once one has arrived.
+    pub perf: Option<PerfSample>,
+    pub perf_open: bool,
+    /// Highlighted row of the performance panel.
+    pub perf_selected: usize,
+    /// The process the highlight is on. The list is sorted by memory and
+    /// reorders between samples; the highlight must stay with its process.
+    pub perf_selected_pid: Option<u32>,
+    /// The process the user has asked once to stop and must confirm.
+    pub perf_confirm: Option<StopRequest>,
+    pub swap_trend: Trend,
+    /// A swap warning was already shown for this stretch of high swap.
+    pub swap_alerted: bool,
 }
 
 /// A device log being followed.
@@ -268,6 +282,13 @@ impl AppState {
             log_streams: BTreeMap::new(),
             last_job_id: 0,
             pending_jobs: Vec::new(),
+            perf: None,
+            perf_open: false,
+            perf_selected: 0,
+            perf_selected_pid: None,
+            perf_confirm: None,
+            swap_trend: Trend::Flat,
+            swap_alerted: false,
         }
     }
 }

@@ -10,6 +10,7 @@ use crate::devices::{Device, Platform, SdkInfo};
 use crate::doctor::Report;
 use crate::nav::{FileList, FileMatch, GrepHit};
 use crate::output::{BuildOutcome, OutputTab};
+use crate::perf::PerfSample;
 use crate::prefs::ProjectPrefs;
 use crate::state::BranchInfo;
 use crate::state::Panel;
@@ -170,4 +171,14 @@ pub enum Action {
     FilterClear,
     /// Show only louder log lines (wraps back to all).
     CycleLogLevel,
+    /// A new look at memory and the dev processes.
+    PerfSampled(PerfSample),
+    /// Open or close the performance panel.
+    TogglePerfPanel,
+    /// Show or hide the performance indicator in the status bar.
+    TogglePerfIndicator,
+    /// Move the highlight in the performance panel.
+    PerfMove(i16),
+    /// Stop the highlighted process (asks for a second press first).
+    PerfStop,
 }

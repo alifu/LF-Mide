@@ -10,6 +10,8 @@ pub mod logparse;
 pub mod nav;
 pub mod output;
 mod output_reducer;
+pub mod perf;
+pub mod perf_reducer;
 pub mod prefs;
 pub mod project;
 pub mod props;
@@ -29,6 +31,10 @@ pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
 pub use output::{
     BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LOG_CAPACITY, LogBuffer, LogLevel,
     LogRequest, MAX_PROBLEMS, OutputFilter, OutputTab, Problem, Severity,
+};
+pub use perf::{
+    Health, PerfSample, Pressure, ProcessKind, ProcessStat, StopRequest, SwapLimits, SystemStats,
+    Trend, format_cpu, format_size, swap_trend,
 };
 pub use prefs::{ProjectPrefs, prefs_file_name};
 pub use project::{Project, ProjectError, ProjectLayout};

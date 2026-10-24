@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 
 use crate::devices::{Device, Platform};
+use crate::perf::ProcessKind;
 
 /// Lines kept per log; older ones are dropped.
 pub const LOG_CAPACITY: usize = 20_000;
@@ -270,9 +271,16 @@ pub struct LogRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
     Build(BuildRequest),
-    CancelBuild { id: u64 },
+    CancelBuild {
+        id: u64,
+    },
     StartLogs(LogRequest),
     StopLogs(Platform),
+    /// Ask a watched process to end (after checking it is still that process).
+    StopProcess {
+        pid: u32,
+        kind: ProcessKind,
+    },
 }
 
 #[cfg(test)]

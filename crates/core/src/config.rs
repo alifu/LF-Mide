@@ -109,7 +109,15 @@ pub struct Config {
     pub terminal: TerminalKind,
     pub show_blame: bool,
     pub show_perf: bool,
+    /// Seconds between performance samples.
+    pub perf_interval_secs: u64,
+    /// Swap use (MiB) at which the indicator turns yellow / red.
+    pub swap_warn_mb: u64,
+    pub swap_critical_mb: u64,
 }
+
+/// Allowed range for `perf_interval_secs`.
+pub const PERF_INTERVAL_RANGE: std::ops::RangeInclusive<u64> = 1..=60;
 
 impl Default for Config {
     fn default() -> Self {
@@ -118,6 +126,9 @@ impl Default for Config {
             terminal: TerminalKind::Auto,
             show_blame: false,
             show_perf: true,
+            perf_interval_secs: 2,
+            swap_warn_mb: 2048,
+            swap_critical_mb: 4096,
         }
     }
 }
@@ -142,6 +153,9 @@ struct PartialConfig {
     terminal: Option<TerminalKind>,
     show_blame: Option<bool>,
     show_perf: Option<bool>,
+    perf_interval_secs: Option<u64>,
+    swap_warn_mb: Option<u64>,
+    swap_critical_mb: Option<u64>,
 }
 
 impl Config {
@@ -161,12 +175,30 @@ impl Config {
             return Err(invalid("leader must not be empty".to_string()));
         }
 
-        Ok(Config {
+        let merged = Config {
             leader: partial.leader.unwrap_or_else(|| self.leader.clone()),
             terminal: partial.terminal.unwrap_or(self.terminal),
             show_blame: partial.show_blame.unwrap_or(self.show_blame),
             show_perf: partial.show_perf.unwrap_or(self.show_perf),
-        })
+            perf_interval_secs: partial
+                .perf_interval_secs
+                .unwrap_or(self.perf_interval_secs),
+            swap_warn_mb: partial.swap_warn_mb.unwrap_or(self.swap_warn_mb),
+            swap_critical_mb: partial.swap_critical_mb.unwrap_or(self.swap_critical_mb),
+        };
+        if !PERF_INTERVAL_RANGE.contains(&merged.perf_interval_secs) {
+            return Err(invalid(format!(
+                "perf_interval_secs must be between {} and {}",
+                PERF_INTERVAL_RANGE.start(),
+                PERF_INTERVAL_RANGE.end()
+            )));
+        }
+        if merged.swap_warn_mb > merged.swap_critical_mb {
+            return Err(invalid(
+                "swap_warn_mb must not be larger than swap_critical_mb".to_string(),
+            ));
+        }
+        Ok(merged)
     }
 
     /// Loads defaults, then the global file, then the project file. Missing
@@ -292,6 +324,31 @@ mod tests {
         assert_eq!(TerminalKind::Terminal.label(), "Terminal.app");
         assert_eq!(TerminalKind::Auto.label(), "Auto-detect");
         assert_eq!(TerminalKind::ALL.len(), 7);
+    }
+
+    #[test]
+    fn perf_settings_can_be_changed_and_are_checked() {
+        let base = Config::default();
+
+        let ok = base
+            .merged(
+                "perf_interval_secs = 5\nswap_warn_mb = 1000\nswap_critical_mb = 3000\n",
+                Path::new("x.toml"),
+            )
+            .unwrap();
+        let slow = base.merged("perf_interval_secs = 0\n", Path::new("x.toml"));
+        let silly = base.merged("perf_interval_secs = 100000\n", Path::new("x.toml"));
+        let backwards = base.merged("swap_warn_mb = 9000\n", Path::new("x.toml"));
+
+        assert_eq!(
+            (ok.perf_interval_secs, ok.swap_warn_mb, ok.swap_critical_mb),
+            (5, 1000, 3000)
+        );
+        for bad in [slow, silly] {
+            assert!(bad.unwrap_err().to_string().contains("perf_interval_secs"));
+        }
+        assert!(backwards.unwrap_err().to_string().contains("swap_warn_mb"));
+        assert_eq!(base.perf_interval_secs, 2);
     }
 
     #[test]

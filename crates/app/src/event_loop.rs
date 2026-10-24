@@ -9,11 +9,12 @@ use lf_mide_terminal::{LaunchError, Launched, copy_to_clipboard, open_split};
 use ratatui::DefaultTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::{branch_watch, editor, effects, jobs, keymap, paths, settings};
+use crate::{branch_watch, editor, effects, jobs, keymap, paths, perf_effects, settings};
 
 /// The first AppleScript call may wait for the user to allow access.
 const EDITOR_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
@@ -47,6 +48,12 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         tx: tx.clone(),
     };
     let mut quit_signals = QuitSignals::install();
+    let perf_visible = Arc::new(AtomicBool::new(state.config.show_perf));
+    let perf_watch = perf_effects::spawn_perf_watch(
+        tx.clone(),
+        Duration::from_secs(state.config.perf_interval_secs),
+        Arc::clone(&perf_visible),
+    );
     let result = loop {
         if state.should_quit {
             break Ok(());
@@ -111,6 +118,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         if refresh_devices {
             effects::spawn_device_listing(tx.clone());
         }
+        perf_visible.store(state.config.show_perf || state.perf_open, Ordering::Relaxed);
         // Builds and log streams the user asked for.
         let (next, queued) = jobs::take_jobs(state);
         state = next;
@@ -159,6 +167,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     job_runner.cancel_all();
     watcher.abort();
     device_watch.abort();
+    perf_watch.abort();
     result
 }
 
