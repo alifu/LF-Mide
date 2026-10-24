@@ -68,10 +68,14 @@ pub fn exited(state: AppState) -> AppState {
     }
 }
 
-pub fn quit_cancelled(state: AppState) -> AppState {
+pub fn quit_cancelled(state: AppState, reason: Option<String>) -> AppState {
+    let status = match reason {
+        None => "Quit cancelled".to_string(),
+        Some(reason) => format!("Neovim did not quit: {reason}"),
+    };
     AppState {
         quit_pending: false,
-        status: Some("Quit cancelled".to_string()),
+        status: Some(status),
         ..state
     }
 }
@@ -143,11 +147,28 @@ mod tests {
 
     #[test]
     fn cancelling_in_neovim_keeps_the_app_running() {
-        let cancelled = reduce(reduce(running(), Action::Quit), Action::EditorQuitCancelled);
+        let cancelled = reduce(
+            reduce(running(), Action::Quit),
+            Action::EditorQuitCancelled(None),
+        );
 
         assert!(!cancelled.quit_pending && !cancelled.should_quit);
         let closed_later = reduce(cancelled, Action::EditorExited);
         assert!(!closed_later.should_quit, ":q later must not end the app");
+    }
+
+    #[test]
+    fn a_refusal_says_why_and_q_can_be_tried_again() {
+        let refused = reduce(
+            reduce(running(), Action::Quit),
+            Action::EditorQuitCancelled(Some("E212: Can't open file for writing".into())),
+        );
+
+        assert_eq!(
+            refused.status.as_deref(),
+            Some("Neovim did not quit: E212: Can't open file for writing")
+        );
+        assert!(reduce(refused, Action::Quit).quit_pending, "asked again");
     }
 
     #[test]

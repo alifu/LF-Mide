@@ -2,6 +2,7 @@
 //! passing keys, pastes and size changes on, quitting, and the cursor shape.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crossterm::cursor::SetCursorStyle;
 use lf_mide_core::screen::CursorShape;
@@ -17,6 +18,8 @@ use crate::paths;
 /// Neovim refuses tinier grids; a smaller panel just shows part of it.
 const MIN_COLUMNS: u16 = 10;
 const MIN_ROWS: u16 = 3;
+/// How long quitting waits for Neovim to end after SIGTERM.
+const SHUTDOWN_PATIENCE: Duration = Duration::from_secs(2);
 
 const KOTLIN_SERVER: &str = "kmp-lsp";
 const SWIFT_SERVER: &str = "sourcekit-lsp";
@@ -64,7 +67,9 @@ impl EmbeddedEditor {
             lsp: state.config.lsp.then(|| language_servers(sys)),
         };
         match Session::start(launch, move |event| {
-            let _ = tx.send(action_for(event, &socket));
+            for action in actions_for(event, &socket) {
+                let _ = tx.send(action);
+            }
         })
         .await
         {
@@ -82,16 +87,20 @@ impl EmbeddedEditor {
         let Some(session) = &self.session else {
             return;
         };
+        // Every request is tried, so a full queue drops only what did not fit.
+        let mut failure = None;
         for action in actions {
             let sent = match action {
                 Action::EditorKeys(keys) => session.input(keys.clone()),
                 Action::EditorPaste(text) => session.paste(text.clone()),
                 _ => Ok(()),
             };
-            if sent.is_err() {
-                let _ = tx.send(Action::Status("Neovim is not responding".to_string()));
-                return;
+            if let Err(error) = sent {
+                failure = Some(error);
             }
+        }
+        if let Some(error) = failure {
+            let _ = tx.send(Action::Status(format!("{error}: some keys were not sent")));
         }
         if actions.iter().any(|a| matches!(a, Action::EditorExited)) {
             self.session = None;
@@ -99,16 +108,12 @@ impl EmbeddedEditor {
         }
     }
 
-    /// Stops a Neovim that started but could not be attached to.
-    pub fn abandon_if_failed(&self, launch_failed: bool, state: &AppState) {
-        if launch_failed && state.embedded && state.editor_socket.is_none() {
-            self.terminate();
-        }
-    }
-
-    pub fn confirm_quit(&self) {
-        if let Some(session) = &self.session {
-            session.confirm_quit();
+    pub fn confirm_quit(&self, tx: &UnboundedSender<Action>) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if let Err(error) = session.confirm_quit() {
+            let _ = tx.send(Action::EditorQuitCancelled(Some(error.to_string())));
         }
     }
 
@@ -145,10 +150,15 @@ impl EmbeddedEditor {
         }
     }
 
-    /// Ends Neovim at once (the app is closing without asking it).
-    pub fn terminate(&self) {
-        if let Some(session) = &self.session {
-            session.terminate();
+    /// Ends Neovim (the app is closing without asking it) and waits a
+    /// moment, so it can write its swap files before the app exits.
+    pub async fn shut_down(&self) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        session.terminate();
+        if !session.wait_exit(SHUTDOWN_PATIENCE).await {
+            tracing::warn!("Neovim did not end after SIGTERM");
         }
     }
 
@@ -161,13 +171,17 @@ impl EmbeddedEditor {
     }
 }
 
-fn action_for(event: SessionEvent, socket: &Path) -> Action {
+fn actions_for(event: SessionEvent, socket: &Path) -> Vec<Action> {
     match event {
-        SessionEvent::Ready { .. } => Action::EditorOpened(socket.to_path_buf()),
-        SessionEvent::Screen(screen) => Action::EditorScreen(screen),
-        SessionEvent::Failed(message) => Action::EditorLaunchFailed(message),
-        SessionEvent::QuitCancelled => Action::EditorQuitCancelled,
-        SessionEvent::Exited => Action::EditorExited,
+        SessionEvent::Ready { lsp_error, .. } => {
+            std::iter::once(Action::EditorOpened(socket.to_path_buf()))
+                .chain(lsp_error.map(|error| Action::Status(format!("Completion is off: {error}"))))
+                .collect()
+        }
+        SessionEvent::Screen(screen) => vec![Action::EditorScreen(screen)],
+        SessionEvent::Failed(message) => vec![Action::EditorLaunchFailed(message)],
+        SessionEvent::QuitCancelled { reason } => vec![Action::EditorQuitCancelled(reason)],
+        SessionEvent::Exited => vec![Action::EditorExited],
     }
 }
 
@@ -200,26 +214,37 @@ mod tests {
     fn session_events_become_actions() {
         let socket = Path::new("/tmp/s.sock");
         let screen = Arc::new(lf_mide_core::screen::Screen::default());
+        let ready = |lsp_error| SessionEvent::Ready {
+            servers: 2,
+            lsp_error,
+        };
 
         assert_eq!(
-            action_for(SessionEvent::Ready { servers: 2 }, socket),
-            Action::EditorOpened(socket.to_path_buf())
+            actions_for(ready(None), socket),
+            vec![Action::EditorOpened(socket.to_path_buf())]
         );
         assert_eq!(
-            action_for(SessionEvent::Screen(Arc::clone(&screen)), socket),
-            Action::EditorScreen(screen)
+            actions_for(ready(Some("no vim.lsp.config".into())), socket),
+            vec![
+                Action::EditorOpened(socket.to_path_buf()),
+                Action::Status("Completion is off: no vim.lsp.config".into())
+            ]
         );
         assert_eq!(
-            action_for(SessionEvent::Failed("no".into()), socket),
-            Action::EditorLaunchFailed("no".into())
+            actions_for(SessionEvent::Screen(Arc::clone(&screen)), socket),
+            vec![Action::EditorScreen(screen)]
         );
         assert_eq!(
-            action_for(SessionEvent::QuitCancelled, socket),
-            Action::EditorQuitCancelled
+            actions_for(SessionEvent::Failed("no".into()), socket),
+            vec![Action::EditorLaunchFailed("no".into())]
         );
         assert_eq!(
-            action_for(SessionEvent::Exited, socket),
-            Action::EditorExited
+            actions_for(SessionEvent::QuitCancelled { reason: None }, socket),
+            vec![Action::EditorQuitCancelled(None)]
+        );
+        assert_eq!(
+            actions_for(SessionEvent::Exited, socket),
+            vec![Action::EditorExited]
         );
     }
 

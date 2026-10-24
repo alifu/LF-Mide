@@ -91,6 +91,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             Input::Terminal(Some(Ok(Event::Paste(text)))) if state.editor_has_keys() => {
                 vec![Action::EditorPaste(text)]
             }
+            Input::Terminal(Some(Ok(Event::Paste(text)))) => keymap::paste_actions(&state, &text),
             Input::Terminal(Some(Ok(_))) => Vec::new(),
             Input::Terminal(Some(Err(err))) => break Err(err.into()),
             Input::Terminal(None) => vec![Action::QuitNow],
@@ -118,14 +119,10 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         let grep_before = state.grep.as_ref().and_then(|g| g.searched.clone());
         let files_before = Arc::clone(&state.files);
         let quit_was_pending = state.quit_pending;
-        let launch_failed = actions
-            .iter()
-            .any(|a| matches!(a, Action::EditorLaunchFailed(_)));
         embedded.forward(&actions, &tx);
         state = actions.into_iter().fold(state, reduce);
-        embedded.abandon_if_failed(launch_failed, &state);
         if state.quit_pending && !quit_was_pending {
-            embedded.confirm_quit();
+            embedded.confirm_quit(&tx);
         }
 
         if doctor_run_started(was_running, &state) {
@@ -220,7 +217,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
     };
     // Stop the things that start commands, then everything still running:
     // a search or a tool being waited for would otherwise be left behind.
-    embedded.terminate();
+    embedded.shut_down().await;
     embedded.restore_cursor();
     watcher.abort();
     device_watch.abort();

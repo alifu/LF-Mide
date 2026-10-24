@@ -53,9 +53,24 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
 fn editor_key(state: &AppState, key: KeyEvent) -> Option<Action> {
     let keys = lf_mide_editor::keys::notation(key)?;
     if lf_mide_editor::keys::leader(&state.config.leader).as_ref() == Some(&keys) {
-        return Some(Action::Focus(Panel::Files));
+        // While Neovim asks about quitting, its question keeps the keys.
+        return (!state.quit_pending).then_some(Action::Focus(Panel::Files));
     }
     Some(Action::EditorKeys(keys))
+}
+
+/// A paste outside the editor: typed into the finder, the search or the log
+/// filter when one is open (line breaks dropped), ignored anywhere else so
+/// it can never run panel commands.
+pub fn paste_actions(state: &AppState, text: &str) -> Vec<Action> {
+    let typing = state.finder.is_some() || state.grep.is_some() || state.output_filter.editing;
+    if !typing {
+        return Vec::new();
+    }
+    text.chars()
+        .filter(|ch| !ch.is_control())
+        .filter_map(|ch| action_for(state, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)))
+        .collect()
 }
 
 fn picker_key(code: KeyCode) -> Option<Action> {
@@ -426,6 +441,33 @@ mod tests {
             action_for(&custom, press(KeyCode::Char('4'), KeyModifiers::CONTROL)),
             Some(Action::Focus(Panel::Files))
         );
+    }
+
+    #[test]
+    fn the_leader_stays_with_neovim_while_it_asks_about_quitting() {
+        let asking = AppState {
+            quit_pending: true,
+            ..editing()
+        };
+
+        assert_eq!(
+            action_for(&asking, press(KeyCode::Char(' '), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(
+            action(&asking, KeyCode::Char('c')),
+            Some(Action::EditorKeys("c".into()))
+        );
+    }
+
+    #[test]
+    fn a_paste_types_into_the_finder_but_never_runs_panel_commands() {
+        let finder = reduce(closed(), Action::OpenFinder);
+
+        let typed = paste_actions(&finder, "Ap\rp");
+
+        assert_eq!(typed.len(), 3, "{typed:?}");
+        assert!(paste_actions(&closed(), "qBD").is_empty());
     }
 
     #[test]

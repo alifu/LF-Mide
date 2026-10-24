@@ -34,7 +34,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         // Sent to Neovim by the app; nothing here changes.
         Action::EditorKeys(_) | Action::EditorPaste(_) => state,
         Action::EditorExited => editor_reducer::exited(state),
-        Action::EditorQuitCancelled => editor_reducer::quit_cancelled(state),
+        Action::EditorQuitCancelled(reason) => editor_reducer::quit_cancelled(state, reason),
         Action::FocusNext => AppState {
             focus: state.focus.next(),
             ..state

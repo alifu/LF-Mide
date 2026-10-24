@@ -248,7 +248,8 @@ change (bracketed paste). Neovim's grid follows the panel when the terminal is r
 shape (block, bar in insert mode, underline in replace mode).
 
 Quitting with `q` closes Neovim first, with Neovim's own question if something is unsaved ("Save changes? Yes, No,
-Cancel"); Cancel keeps both running. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
+Cancel"); Cancel keeps both running; if Neovim cannot quit (a save failed), the status line says why
+and `q` asks again. While the question is open the leader stays with Neovim. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
 goes away (window closed, `SIGHUP`/`SIGTERM`), there is nobody left to answer, so Neovim is stopped at once and its swap
 file keeps the unsaved changes for recovery next time.
 

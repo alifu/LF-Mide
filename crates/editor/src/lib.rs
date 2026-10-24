@@ -125,6 +125,9 @@ pub enum EditorError {
     Rejected(String),
     #[error("Neovim did not answer in time")]
     TimedOut,
+    /// Requests are piling up faster than Neovim reads them.
+    #[error("Neovim is not keeping up")]
+    Busy,
     /// The program could not be started.
     #[error("Cannot start Neovim: {0}")]
     Start(String),

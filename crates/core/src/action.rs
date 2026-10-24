@@ -68,8 +68,9 @@ pub enum Action {
     EditorPaste(String),
     /// That Neovim has ended.
     EditorExited,
-    /// The user said Cancel to Neovim's question on quitting.
-    EditorQuitCancelled,
+    /// Neovim is still running after being asked to quit: the user said
+    /// Cancel (`None`), or Neovim gave this reason.
+    EditorQuitCancelled(Option<String>),
     /// This project file is now showing in Neovim.
     FileOpened(PathBuf),
     /// A scan of the project finished.

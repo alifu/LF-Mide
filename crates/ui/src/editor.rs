@@ -13,7 +13,9 @@ use ratatui::widgets::Paragraph;
 use crate::{MUTED, panel_block};
 
 pub(crate) fn render_editor(frame: &mut Frame, area: Rect, state: &AppState) {
-    let title = if state.editor_has_keys() {
+    let title = if state.quit_pending {
+        "Editor · answer Neovim's question to quit".to_string()
+    } else if state.editor_has_keys() {
         format!(
             "Editor · {} back to panels",
             printable(&state.config.leader)

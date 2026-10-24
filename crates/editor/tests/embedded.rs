@@ -14,10 +14,14 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 const PATIENCE: Duration = Duration::from_secs(10);
 
 fn nvim_available() -> bool {
-    Command::new("nvim")
+    let found = Command::new("nvim")
         .arg("--version")
         .output()
-        .is_ok_and(|o| o.status.success())
+        .is_ok_and(|o| o.status.success());
+    if !found {
+        eprintln!("SKIPPED: nvim is not installed, so the embedded editor is not tested");
+    }
+    found
 }
 
 struct Running {
@@ -186,7 +190,7 @@ async fn quitting_without_changes_ends_neovim() {
     }
     let mut nvim = start(40, 10).await;
 
-    nvim.session.confirm_quit();
+    nvim.session.confirm_quit().unwrap();
 
     nvim.until("exit", |e| *e == SessionEvent::Exited).await;
 }
@@ -201,14 +205,16 @@ async fn unsaved_changes_are_asked_about_and_cancel_keeps_neovim() {
     nvim.until_screen("edit", |s| starts_with(s, 0, "changed"))
         .await;
 
-    nvim.session.confirm_quit();
+    nvim.session.confirm_quit().unwrap();
     nvim.until_screen("prompt", |s| {
         (0..s.height).any(|r| s.row_text(r).contains("Save changes"))
     })
     .await;
     nvim.session.input("c".into()).unwrap();
-    nvim.until("cancel", |e| *e == SessionEvent::QuitCancelled)
-        .await;
+    nvim.until("cancel", |e| {
+        *e == SessionEvent::QuitCancelled { reason: None }
+    })
+    .await;
     // Clear the old prompt so the next one is known to be new.
     nvim.session.input("<C-l>".into()).unwrap();
     nvim.until_screen("prompt gone", |s| {
@@ -220,7 +226,7 @@ async fn unsaved_changes_are_asked_about_and_cancel_keeps_neovim() {
         "still open"
     );
 
-    nvim.session.confirm_quit();
+    nvim.session.confirm_quit().unwrap();
     nvim.until_screen("prompt again", |s| {
         (0..s.height).any(|r| s.row_text(r).contains("Save changes"))
     })
@@ -230,7 +236,7 @@ async fn unsaved_changes_are_asked_about_and_cancel_keeps_neovim() {
 }
 
 #[tokio::test]
-async fn terminate_ends_the_process() {
+async fn terminate_ends_the_process_and_shutdown_can_wait_for_it() {
     if !nvim_available() {
         return;
     }
@@ -238,7 +244,49 @@ async fn terminate_ends_the_process() {
 
     nvim.session.terminate();
 
+    assert!(nvim.session.wait_exit(PATIENCE).await, "ended in time");
     nvim.until("exit", |e| *e == SessionEvent::Exited).await;
+}
+
+#[tokio::test]
+async fn a_quit_neovim_refuses_is_reported_with_its_reason() {
+    if !nvim_available() {
+        return;
+    }
+    let mut nvim = start(60, 10).await;
+    let folder = nvim.dir.path().join("gone");
+    std::fs::create_dir(&folder).unwrap();
+    let file = folder.join("x.txt");
+    std::fs::write(&file, "x\n").unwrap();
+    lf_mide_editor::open_file(&nvim.socket(), &file, None, 0, PATIENCE)
+        .await
+        .unwrap();
+    nvim.session.input("Achanged<Esc>".into()).unwrap();
+    nvim.until_screen("edit", |s| starts_with(s, 0, "xchanged"))
+        .await;
+    // Saving will fail: the file's folder is gone.
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    nvim.session.confirm_quit().unwrap();
+    nvim.until_screen("prompt", |s| {
+        (0..s.height).any(|r| s.row_text(r).contains("Save changes"))
+    })
+    .await;
+    nvim.session.input("y".into()).unwrap();
+    let event = nvim
+        .until("refusal", |e| {
+            matches!(e, SessionEvent::QuitCancelled { .. })
+        })
+        .await;
+
+    let SessionEvent::QuitCancelled { reason } = event else {
+        unreachable!()
+    };
+    assert!(
+        reason.as_deref().is_some_and(|r| r.starts_with("E212")),
+        "{reason:?}"
+    );
+    assert!(!nvim.session.wait_exit(Duration::from_millis(300)).await);
 }
 
 #[tokio::test]
@@ -299,7 +347,7 @@ async fn resizing_and_pasting_while_neovim_asks_do_not_block_the_answer() {
     nvim.until_screen("edit", |s| starts_with(s, 0, "changed"))
         .await;
 
-    nvim.session.confirm_quit();
+    nvim.session.confirm_quit().unwrap();
     nvim.until_screen("prompt", |s| {
         (0..s.height).any(|r| s.row_text(r).contains("Save changes"))
     })
@@ -308,6 +356,8 @@ async fn resizing_and_pasting_while_neovim_asks_do_not_block_the_answer() {
     nvim.session.paste("x".into()).unwrap();
     nvim.session.input("c".into()).unwrap();
 
-    nvim.until("cancel", |e| matches!(e, SessionEvent::QuitCancelled))
-        .await;
+    nvim.until("cancel", |e| {
+        matches!(e, SessionEvent::QuitCancelled { reason: None })
+    })
+    .await;
 }

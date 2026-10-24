@@ -6,13 +6,14 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use lf_mide_core::screen::Screen;
 use nvim_rs::compat::tokio::Compat;
 use nvim_rs::{Handler, Neovim, UiAttachOptions, Value};
-use tokio::process::{ChildStdin, Command};
-use tokio::sync::mpsc;
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{mpsc, watch};
 
 use crate::EditorError;
 use crate::lsp::{LspServers, SETUP_LUA};
@@ -22,10 +23,18 @@ use crate::redraw::{Update, parse};
 /// full queue means Neovim has stopped reading.
 const QUEUE: usize = 256;
 
-/// Asks before quitting when buffers have unsaved changes: Neovim's own
-/// "Save changes?" prompt, answered in the editor. Returns when the user
-/// cancels; when Neovim quits, the call never returns.
-const CONFIRM_QUIT_LUA: &str = "local ok, err = pcall(vim.cmd, 'confirm qa'); return ok";
+/// After a failed quit call, how long to wait for Neovim to end before
+/// treating the call as refused rather than as Neovim quitting.
+const QUIT_SETTLE: Duration = Duration::from_secs(1);
+
+/// Neovim's own "Save changes?" prompt, answered in the editor. Returns
+/// `{ true }` when the user cancels and `{ false, message }` when Neovim
+/// refuses (a write failed, a job still runs); when Neovim quits, the call
+/// never returns.
+const CONFIRM_QUIT_LUA: &str = r#"
+local ok, err = pcall(vim.cmd, 'confirm qa')
+return { ok, ok and '' or tostring(err) }
+"#;
 
 /// What starting Neovim needs.
 #[derive(Debug, Clone)]
@@ -46,13 +55,18 @@ pub struct Launch {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionEvent {
     /// Attached and set up: the socket answers and files can be opened.
-    Ready { servers: usize },
+    /// `lsp_error` says why language servers could not be set up.
+    Ready {
+        servers: usize,
+        lsp_error: Option<String>,
+    },
     /// Neovim finished drawing; this is what it shows now.
     Screen(Arc<Screen>),
     /// Attaching failed; Neovim is being stopped.
     Failed(String),
-    /// The user cancelled quitting in Neovim's prompt.
-    QuitCancelled,
+    /// Neovim is still running after being asked to quit: the user said
+    /// Cancel (`reason` is `None`), or Neovim refused and says why.
+    QuitCancelled { reason: Option<String> },
     /// The Neovim process has ended.
     Exited,
 }
@@ -64,6 +78,7 @@ enum Request {
     Input(String),
     Paste(String),
     Resize(u16, u16),
+    ConfirmQuit,
 }
 
 /// A running embedded Neovim. Dropping it stops the writer; [`terminate`]
@@ -71,10 +86,10 @@ enum Request {
 ///
 /// [`terminate`]: Session::terminate
 pub struct Session {
-    nvim: Neovim<Compat<ChildStdin>>,
     commands: mpsc::Sender<Request>,
-    pid: Option<u32>,
-    report: Report,
+    /// Asks the process watcher to send SIGTERM.
+    stop: mpsc::UnboundedSender<()>,
+    exited: watch::Receiver<bool>,
 }
 
 impl Session {
@@ -98,27 +113,33 @@ impl Session {
             .current_dir(&launch.cwd)
             // Anything Neovim prints would land on top of the TUI.
             .stderr(Stdio::null())
+            // Only a backstop: shutting down waits for the SIGTERM to work.
             .kill_on_drop(true);
-        let (nvim, io, mut child) = nvim_rs::create::tokio::new_child_cmd(&mut command, handler)
+        let (nvim, io, child) = nvim_rs::create::tokio::new_child_cmd(&mut command, handler)
             .await
             .map_err(|error| EditorError::Start(error.to_string()))?;
-        let pid = child.id();
 
-        let exited = Arc::clone(&report);
-        tokio::spawn(async move {
-            // The RPC loop ends when Neovim closes its output.
-            let _ = io.await;
-            let _ = child.wait().await;
-            exited(SessionEvent::Exited);
-        });
-
+        let (stop, stop_requests) = mpsc::unbounded_channel();
+        let (exited_tx, exited) = watch::channel(false);
+        tokio::spawn(watch_process(
+            child,
+            io,
+            stop_requests,
+            exited_tx,
+            Arc::clone(&report),
+        ));
         let (commands, queue) = mpsc::channel(QUEUE);
-        tokio::spawn(write_loop(nvim.clone(), launch, queue, Arc::clone(&report)));
-        Ok(Session {
+        let writer = Writer {
             nvim,
-            commands,
-            pid,
             report,
+            stop: stop.clone(),
+            exited: exited.clone(),
+        };
+        tokio::spawn(writer.run(launch, queue));
+        Ok(Session {
+            commands,
+            stop,
+            exited,
         })
     }
 
@@ -136,89 +157,204 @@ impl Session {
         self.send(Request::Resize(width, height))
     }
 
-    /// Quits Neovim, asking about unsaved changes in Neovim itself.
-    /// [`SessionEvent::QuitCancelled`] follows if the user says no; the
-    /// question is answered with normal keys through [`Session::input`].
-    pub fn confirm_quit(&self) {
-        let nvim = self.nvim.clone();
-        let report = Arc::clone(&self.report);
-        tokio::spawn(async move {
-            // Leave whatever mode the editor is in first, so the prompt is
-            // the only thing waiting for keys.
-            let _ = nvim.input("<C-\\><C-n>").await;
-            if let Ok(Value::Boolean(true)) = nvim.exec_lua(CONFIRM_QUIT_LUA, vec![]).await {
-                report(SessionEvent::QuitCancelled);
-            }
-        });
+    /// Quits Neovim, asking about unsaved changes in Neovim itself, after
+    /// any keys sent before. [`SessionEvent::QuitCancelled`] follows if it
+    /// is still running afterwards; the question is answered with normal
+    /// keys through [`Session::input`].
+    pub fn confirm_quit(&self) -> Result<(), EditorError> {
+        self.send(Request::ConfirmQuit)
     }
 
     /// Asks the process to end now. Neovim keeps its swap files, so unsaved
     /// changes can be recovered next time.
     pub fn terminate(&self) {
-        let Some(pid) = self.pid.and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
-            return;
-        };
-        // SAFETY: `kill` has no memory effects; the pid is our own child,
-        // which `kill_on_drop` reaps at the latest when the session goes.
-        unsafe {
-            libc::kill(pid, libc::SIGTERM);
-        }
+        // Nothing listens once the process has ended, which is fine.
+        let _ = self.stop.send(());
     }
 
-    fn send(&self, command: Request) -> Result<(), EditorError> {
+    /// Waits up to `patience` for the process to end; true if it has.
+    pub async fn wait_exit(&self, patience: Duration) -> bool {
+        let mut exited = self.exited.clone();
+        tokio::time::timeout(patience, exited.wait_for(|done| *done))
+            .await
+            .is_ok_and(|seen| seen.is_ok())
+    }
+
+    fn send(&self, request: Request) -> Result<(), EditorError> {
         self.commands
-            .try_send(command)
-            .map_err(|_| EditorError::TimedOut)
+            .try_send(request)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => EditorError::Busy,
+                mpsc::error::TrySendError::Closed(_) => {
+                    EditorError::NotRunning("the embedded editor".to_string())
+                }
+            })
     }
 }
 
-/// Attaches, sets up language servers, then writes queued input in order.
-async fn write_loop(
-    nvim: Neovim<Compat<ChildStdin>>,
-    launch: Launch,
-    mut queue: mpsc::Receiver<Request>,
+/// Owns the process: reports when it ends, and is the only one to signal
+/// it, so a pid can never be signalled after it was reaped and reused.
+async fn watch_process(
+    mut child: Child,
+    mut io: tokio::task::JoinHandle<Result<(), Box<nvim_rs::error::LoopError>>>,
+    mut stop_requests: mpsc::UnboundedReceiver<()>,
+    exited: watch::Sender<bool>,
     report: Report,
 ) {
-    let mut options = UiAttachOptions::new();
-    options.set_rgb(true).set_linegrid_external(true);
-    if let Err(error) = nvim
-        .ui_attach(i64::from(launch.width), i64::from(launch.height), &options)
-        .await
-    {
-        report(SessionEvent::Failed(format!(
-            "Neovim did not start: {error}"
-        )));
-        return;
-    }
-    let servers = match &launch.lsp {
-        Some(servers) if !servers.is_empty() => nvim
-            .exec_lua(SETUP_LUA, servers.setup_args())
-            .await
-            .ok()
-            .and_then(|count| count.as_u64())
-            .and_then(|count| usize::try_from(count).ok())
-            .unwrap_or(0),
-        _ => 0,
-    };
-    report(SessionEvent::Ready { servers });
-
-    while let Some(command) = queue.recv().await {
-        let outcome = match command {
-            Request::Input(keys) => nvim.input(&keys).await.map(drop),
-            Request::Paste(text) => nvim
-                .paste(&normalize_newlines(&text), false, -1)
-                .await
-                .map(drop),
-            Request::Resize(width, height) => {
-                nvim.ui_try_resize(i64::from(width), i64::from(height))
-                    .await
+    let mut io_done = false;
+    loop {
+        tokio::select! {
+            outcome = &mut io, if !io_done => {
+                io_done = true;
+                if let Ok(Err(error)) = outcome {
+                    tracing::debug!(%error, "the Neovim connection ended");
+                }
             }
-        };
-        if outcome.is_err() {
-            // Neovim is gone; the exit is reported by the process watcher.
-            return;
+            status = child.wait() => {
+                if let Err(error) = status {
+                    tracing::warn!(%error, "cannot wait for Neovim");
+                }
+                break;
+            }
+            Some(()) = stop_requests.recv() => signal_term(&child),
         }
     }
+    // Let the last redraws through first, so Exited is the final event.
+    if !io_done {
+        let _ = tokio::time::timeout(QUIT_SETTLE, &mut io).await;
+    }
+    let _ = exited.send(true);
+    report(SessionEvent::Exited);
+}
+
+fn signal_term(child: &Child) {
+    // `id` is None once the child has been reaped.
+    let Some(pid) = child.id().and_then(|pid| libc::pid_t::try_from(pid).ok()) else {
+        return;
+    };
+    // SAFETY: `kill` has no memory effects, and the child has not been
+    // reaped (this task is the only one that waits for it), so the pid is
+    // still ours.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
+        tracing::debug!(error = %std::io::Error::last_os_error(), "cannot stop Neovim");
+    }
+}
+
+/// Attaches, sets up language servers, then writes queued requests in order.
+struct Writer {
+    nvim: Neovim<Compat<ChildStdin>>,
+    report: Report,
+    stop: mpsc::UnboundedSender<()>,
+    exited: watch::Receiver<bool>,
+}
+
+impl Writer {
+    async fn run(self, launch: Launch, mut queue: mpsc::Receiver<Request>) {
+        let mut options = UiAttachOptions::new();
+        options.set_rgb(true).set_linegrid_external(true);
+        if let Err(error) = self
+            .nvim
+            .ui_attach(i64::from(launch.width), i64::from(launch.height), &options)
+            .await
+        {
+            (self.report)(SessionEvent::Failed(format!(
+                "Neovim did not start: {error}"
+            )));
+            let _ = self.stop.send(());
+            return;
+        }
+        let (servers, lsp_error) = self.set_up_lsp(launch.lsp.as_ref()).await;
+        (self.report)(SessionEvent::Ready { servers, lsp_error });
+
+        while let Some(request) = queue.recv().await {
+            let outcome = match request {
+                Request::Input(keys) => self.nvim.input(&keys).await.map(drop),
+                Request::Paste(text) => self
+                    .nvim
+                    .paste(&normalize_newlines(&text), false, -1)
+                    .await
+                    .map(drop),
+                Request::Resize(width, height) => {
+                    self.nvim
+                        .ui_try_resize(i64::from(width), i64::from(height))
+                        .await
+                }
+                Request::ConfirmQuit => self.confirm_quit().await,
+            };
+            if let Err(error) = outcome {
+                // Neovim is gone; the exit is reported by the process watcher.
+                tracing::debug!(%error, "stopped writing to Neovim");
+                return;
+            }
+        }
+    }
+
+    async fn set_up_lsp(&self, servers: Option<&LspServers>) -> (usize, Option<String>) {
+        let Some(servers) = servers.filter(|servers| !servers.is_empty()) else {
+            return (0, None);
+        };
+        match self.nvim.exec_lua(SETUP_LUA, servers.setup_args()).await {
+            Ok(count) => (
+                count
+                    .as_u64()
+                    .and_then(|count| usize::try_from(count).ok())
+                    .unwrap_or(0),
+                None,
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "cannot set up language servers");
+                (0, Some(error.to_string()))
+            }
+        }
+    }
+
+    /// Leaves whatever mode the editor is in, then asks Neovim to quit. The
+    /// question is answered with keys sent later, so the call is awaited on
+    /// its own task (Neovim reads input while the prompt waits).
+    async fn confirm_quit(&self) -> Result<(), Box<nvim_rs::error::CallError>> {
+        self.nvim.input("<C-\\><C-n>").await?;
+        let nvim = self.nvim.clone();
+        let report = Arc::clone(&self.report);
+        let mut exited = self.exited.clone();
+        tokio::spawn(async move {
+            let outcome = nvim.exec_lua(CONFIRM_QUIT_LUA, vec![]).await;
+            let reason = match outcome {
+                Ok(answer) => refusal(&answer),
+                Err(error) => {
+                    // Quitting closes the connection mid-call: only a call
+                    // that failed while Neovim stays up is a refusal.
+                    let quitting = tokio::time::timeout(QUIT_SETTLE, exited.wait_for(|done| *done))
+                        .await
+                        .is_ok();
+                    if quitting {
+                        return;
+                    }
+                    Some(error.to_string())
+                }
+            };
+            report(SessionEvent::QuitCancelled { reason });
+        });
+        Ok(())
+    }
+}
+
+/// `None` when the user cancelled, else Neovim's reason for not quitting.
+fn refusal(answer: &Value) -> Option<String> {
+    let parts = answer.as_array().map(Vec::as_slice).unwrap_or_default();
+    if parts.first().and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    let message = parts
+        .get(1)
+        .and_then(Value::as_str)
+        .unwrap_or("Neovim did not quit");
+    // `[string ...]:353: nvim_exec2(), line 1: Vim(qall):E212: ...`: the
+    // part after the command name is what the user needs.
+    let short = message
+        .rsplit_once("):")
+        .map_or(message, |(_, rest)| rest)
+        .trim();
+    Some(short.to_string())
 }
 
 /// Terminals paste line breaks as `\r`; Neovim wants `\n`.
@@ -259,6 +395,22 @@ impl Handler for RedrawHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancel_has_no_reason_and_a_refusal_says_why() {
+        let cancelled = Value::Array(vec![true.into(), "".into()]);
+        let refused = Value::Array(vec![
+            false.into(),
+            "[string \"vim/_core/editor\"]:353: nvim_exec2(), line 1: Vim(qall):E212: Can't open file for writing".into(),
+        ]);
+
+        assert_eq!(refusal(&cancelled), None);
+        assert_eq!(
+            refusal(&refused).as_deref(),
+            Some("E212: Can't open file for writing")
+        );
+        assert_eq!(refusal(&Value::Nil).as_deref(), Some("Neovim did not quit"));
+    }
 
     #[test]
     fn pasted_line_breaks_become_newlines() {
