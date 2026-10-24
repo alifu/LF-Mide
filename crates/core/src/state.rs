@@ -10,7 +10,7 @@ use crate::diff_view::DiffView;
 use crate::doctor::Report;
 use crate::git::{BaseRef, FileChange};
 use crate::git_reducer::MarksKey;
-use crate::nav::{FileList, FileMatch, GrepHit, TreeRow};
+use crate::nav::{FileList, FileMatch, GrepHit, TreeIndex, TreeRow};
 use crate::output::{BuildState, Job, LogBuffer, OutputFilter, OutputTab, Problem};
 use crate::perf::{PerfSample, StopRequest, Trend};
 use crate::prefs::ProjectPrefs;
@@ -138,6 +138,13 @@ pub struct AppState {
     pub terminal_picker: Option<usize>,
     /// Where the Neovim we launched listens, once it is open.
     pub editor_socket: Option<PathBuf>,
+    /// A file the user chose before Neovim was running: opened as soon as it
+    /// is (the launch was started for it).
+    pub pending_open: Option<(PathBuf, Option<u32>)>,
+    /// Neovim is being started, so a second request must not start another.
+    pub editor_launching: bool,
+    /// The event loop should start Neovim now.
+    pub editor_launch_wanted: bool,
     /// True once a file was shown in that Neovim, i.e. its socket is known
     /// to work; opens can then give up quickly if it has gone.
     pub editor_ready: bool,
@@ -146,7 +153,9 @@ pub struct AppState {
     pub files_loading: bool,
     /// Directories open in the file tree (relative paths).
     pub expanded: BTreeSet<PathBuf>,
-    /// The visible tree rows, derived from `files` and `expanded`.
+    /// `files` ordered once, so a toggle only walks the visible rows.
+    pub tree_index: Arc<TreeIndex>,
+    /// The visible tree rows, derived from `tree_index` and `expanded`.
     pub tree: Arc<Vec<TreeRow>>,
     pub tree_selected: usize,
     /// First visible tree row.
@@ -272,9 +281,13 @@ impl AppState {
             terminal_picker: None,
             editor_socket: None,
             editor_ready: false,
+            pending_open: None,
+            editor_launching: false,
+            editor_launch_wanted: false,
             files: Arc::new(Vec::new()),
             files_loading: true,
             expanded: BTreeSet::new(),
+            tree_index: Arc::new(TreeIndex::default()),
             tree: Arc::new(Vec::new()),
             tree_selected: 0,
             tree_top: 0,

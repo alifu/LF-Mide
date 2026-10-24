@@ -11,6 +11,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
+use lf_mide_core::text::visible as printable;
+
 use crate::search::{centered, window_top};
 use crate::{ACCENT, MUTED};
 
@@ -181,6 +183,7 @@ fn name_of(state: &AppState, process: &ProcessStat) -> String {
             .map_or_else(|| short_id(&process.detail), |d| d.name.clone()),
         _ => process.detail.clone(),
     };
+    let detail = printable(&detail);
     if detail.is_empty() {
         process.kind.label().to_string()
     } else {

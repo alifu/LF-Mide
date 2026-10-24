@@ -59,6 +59,15 @@ impl std::fmt::Display for RunError {
 pub trait System: Sync {
     /// Runs `program` and waits for it, up to the implementation's timeout.
     fn run(&self, program: &str, args: &[&str]) -> Result<Output, RunError>;
+    /// Like [`run`](Self::run), in the folder `dir`. Lets a command work on
+    /// the files there by relative name, so a folder whose path is not valid
+    /// text never has to be written out as an argument.
+    fn run_in(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output, RunError> {
+        let _ = (dir, program, args);
+        Err(RunError::Other(
+            "running in a folder is not supported".to_string(),
+        ))
+    }
     /// Starts `program` and returns at once, leaving it running on its own
     /// (an emulator, for example). Its output is discarded; it is not
     /// stopped when LF-Mide exits.
@@ -141,6 +150,77 @@ fn kill_group(group: libc::pid_t) {
     }
 }
 
+/// Process groups of the commands `SystemRunner::run` is waiting for right
+/// now, so that quitting can stop them instead of leaving them behind (a
+/// search that was still running, say).
+static RUNNING: Mutex<Vec<libc::pid_t>> = Mutex::new(Vec::new());
+/// Set once the program is quitting: no new command may start, so nothing
+/// can slip in after the sweep and be left running.
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Lets commands start again (only for tests of the shutdown itself).
+#[doc(hidden)]
+pub fn allow_commands_again() {
+    SHUTTING_DOWN.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn shutting_down() -> bool {
+    SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst)
+}
+/// Grace between asking commands to stop and forcing them.
+const TERMINATE_GRACE: Duration = Duration::from_millis(150);
+
+/// A command that is running, listed in [`RUNNING`] until it is dropped.
+struct RunningCommand {
+    group: libc::pid_t,
+}
+
+impl RunningCommand {
+    fn register(group: libc::pid_t) -> Self {
+        RUNNING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(group);
+        Self { group }
+    }
+}
+
+impl Drop for RunningCommand {
+    fn drop(&mut self) {
+        RUNNING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|group| *group != self.group);
+    }
+}
+
+/// How many commands started by [`SystemRunner::run`] are running now.
+pub fn running_commands() -> usize {
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).len()
+}
+
+/// Stops every command [`SystemRunner::run`] is waiting for: asks, waits a
+/// moment, then forces. For the end of the program. Commands started with
+/// `spawn` (an emulator) are meant to outlive LF-Mide and are not touched.
+pub fn terminate_running_commands() {
+    SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+    let groups: Vec<libc::pid_t> = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if groups.is_empty() {
+        return;
+    }
+    for group in &groups {
+        // SAFETY: plain signal to a process group this module created.
+        unsafe { libc::killpg(*group, libc::SIGTERM) };
+    }
+    std::thread::sleep(TERMINATE_GRACE);
+    // Only the ones that are still listed: a finished command has been
+    // reaped and its number could belong to something else by now.
+    let still: Vec<libc::pid_t> = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for group in groups.into_iter().filter(|g| still.contains(g)) {
+        kill_group(group);
+    }
+}
+
 /// The real machine.
 pub struct SystemRunner {
     timeout: Duration,
@@ -162,28 +242,56 @@ impl Default for SystemRunner {
     }
 }
 
-impl System for SystemRunner {
-    fn run(&self, program: &str, args: &[&str]) -> Result<Output, RunError> {
-        let mut child = Command::new(program)
+impl SystemRunner {
+    /// Runs `program`, in `dir` when given, and waits for it.
+    fn run_command(
+        &self,
+        dir: Option<&Path>,
+        program: &str,
+        args: &[&str],
+    ) -> Result<Output, RunError> {
+        if shutting_down() {
+            return Err(RunError::Other("LF-Mide is shutting down".to_string()));
+        }
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             // Own process group, so a timeout can stop grandchildren too.
-            .process_group(0)
-            .spawn()
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => RunError::NotFound,
-                _ => RunError::Other(err.to_string()),
-            })?;
+            .process_group(0);
+        if let Some(dir) = dir {
+            // A folder that has gone is not "program not found".
+            if !dir.is_dir() {
+                return Err(RunError::Other(format!(
+                    "{} is not a folder",
+                    dir.display()
+                )));
+            }
+            command.current_dir(dir);
+        }
+        let mut child = command.spawn().map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => RunError::NotFound,
+            _ => RunError::Other(err.to_string()),
+        })?;
         let group = child.id() as libc::pid_t;
+        let listed = RunningCommand::register(group);
+        // Quitting began while this was starting: the sweep may have missed it.
+        if shutting_down() {
+            kill_group(group);
+        }
         let stdout = Capture::start(child.stdout.take());
         let stderr = Capture::start(child.stderr.take());
 
         let deadline = Instant::now() + self.timeout;
         let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status,
+                Ok(Some(status)) => {
+                    // Reaped: its number may be reused from now on.
+                    drop(listed);
+                    break status;
+                }
                 Ok(None) if Instant::now() >= deadline => {
                     kill_group(group);
                     let _ = child.wait();
@@ -210,6 +318,16 @@ impl System for SystemRunner {
             stdout,
             stderr,
         })
+    }
+}
+
+impl System for SystemRunner {
+    fn run(&self, program: &str, args: &[&str]) -> Result<Output, RunError> {
+        self.run_command(None, program, args)
+    }
+
+    fn run_in(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output, RunError> {
+        self.run_command(Some(dir), program, args)
     }
 
     fn spawn(&self, program: &str, args: &[&str]) -> Result<(), RunError> {

@@ -45,6 +45,13 @@ pub enum Action {
     OpenEditor,
     /// Neovim is running and listening on this socket.
     EditorOpened(PathBuf),
+    /// The event loop has started Neovim.
+    EditorLaunchStarted,
+    /// Neovim could not be started (or only by hand); the file the user
+    /// wanted to open is dropped.
+    EditorLaunchFailed(String),
+    /// The file waiting for Neovim has been handed over.
+    PendingOpenSent,
     /// Neovim could not be reached; forget it so `e` starts a new one.
     EditorLost,
     /// This project file is now showing in Neovim.

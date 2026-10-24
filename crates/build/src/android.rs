@@ -40,11 +40,14 @@ pub(crate) fn run(
         .filter(|serial| plain_identifier(serial))
         .ok_or_else(|| failed(format!("{} has no adb serial", ctx.device.name)))?;
     let app = app_info(ctx.root, ctx.layout, sys).map_err(failed)?;
-    let wrapper = gradle_wrapper(ctx.root, sys).map_err(failed)?;
+    // Checked to be inside the project; then run by its name relative to the
+    // project folder (the working directory), so the project's own path is
+    // never turned into text.
+    gradle_wrapper(ctx.root, sys).map_err(failed)?;
 
     report.step("Building");
     let spec = StreamSpec {
-        program: wrapper.display().to_string(),
+        program: format!("./{GRADLE_WRAPPER}"),
         args: vec![
             "--console=plain".to_string(),
             format!(":{}:installDebug", app.module),
@@ -62,6 +65,7 @@ pub(crate) fn run(
         sys,
         cancel,
         report,
+        None,
         &adb.display().to_string(),
         &[
             "-s",
@@ -306,7 +310,7 @@ android {
         assert_eq!(outcome, BuildOutcome::Succeeded);
         assert_eq!(report.steps, ["Building", "Launching"]);
         let specs = streamer.specs.borrow();
-        assert_eq!(specs[0].program, "/proj/gradlew");
+        assert_eq!(specs[0].program, "./gradlew");
         assert_eq!(
             specs[0].args,
             ["--console=plain", ":androidApp:installDebug"]
@@ -317,7 +321,7 @@ android {
             [("ANDROID_SERIAL".to_string(), "emulator-5554".to_string())]
         );
         assert!(report.log.iter().any(|l| l.contains("BUILD SUCCESSFUL")));
-        assert!(report.log.iter().any(|l| l.starts_with("$ /proj/gradlew")));
+        assert!(report.log.iter().any(|l| l.starts_with("$ ./gradlew")));
     }
 
     #[test]

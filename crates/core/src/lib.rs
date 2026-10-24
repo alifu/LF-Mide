@@ -20,6 +20,7 @@ pub mod project;
 pub mod props;
 pub mod reducer;
 pub mod state;
+pub mod text;
 pub mod version;
 
 pub use action::Action;

@@ -46,29 +46,25 @@ pub struct TreeRow {
     pub expanded: bool,
 }
 
-/// The rows to show for `files`, with the directories in `expanded` open.
+/// The folders and files of a project, ordered once, so that opening or
+/// closing a folder only has to walk what is on screen instead of sorting
+/// the whole project again.
+///
 /// In each directory, subdirectories come first, then files, each sorted
 /// case-insensitively. Directories are derived from the file paths, so an
 /// empty directory never appears.
-pub fn tree_rows(files: &[PathBuf], expanded: &BTreeSet<PathBuf>) -> Vec<TreeRow> {
-    let mut root = Dir::default();
-    for file in files {
-        let Some(clean) = clean_relative(file) else {
-            continue;
-        };
-        let mut parts: Vec<OsString> = clean.iter().map(OsString::from).collect();
-        let Some(name) = parts.pop() else { continue };
-        let dir = parts
-            .into_iter()
-            .fold(&mut root, |dir, part| dir.dirs.entry(part).or_default());
-        dir.files.insert(name);
-    }
-    let mut rows = Vec::new();
-    root.emit(Path::new(""), 0, expanded, &mut rows);
-    rows
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TreeIndex {
+    root: SortedDir,
 }
 
-/// A directory while the tree is being assembled.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct SortedDir {
+    dirs: Vec<(OsString, SortedDir)>,
+    files: Vec<OsString>,
+}
+
+/// A directory while the index is being assembled.
 #[derive(Default)]
 struct Dir {
     dirs: BTreeMap<OsString, Dir>,
@@ -81,6 +77,47 @@ fn sort_key(name: &OsStr) -> (String, OsString) {
 }
 
 impl Dir {
+    fn sorted(self) -> SortedDir {
+        let mut dirs: Vec<(OsString, SortedDir)> = self
+            .dirs
+            .into_iter()
+            .map(|(name, dir)| (name, dir.sorted()))
+            .collect();
+        dirs.sort_by_cached_key(|(name, _)| sort_key(name));
+        let mut files: Vec<OsString> = self.files.into_iter().collect();
+        files.sort_by_cached_key(|name| sort_key(name));
+        SortedDir { dirs, files }
+    }
+}
+
+impl TreeIndex {
+    pub fn build(files: &[PathBuf]) -> Self {
+        let mut root = Dir::default();
+        for file in files {
+            let Some(clean) = clean_relative(file) else {
+                continue;
+            };
+            let mut parts: Vec<OsString> = clean.iter().map(OsString::from).collect();
+            let Some(name) = parts.pop() else { continue };
+            let dir = parts
+                .into_iter()
+                .fold(&mut root, |dir, part| dir.dirs.entry(part).or_default());
+            dir.files.insert(name);
+        }
+        Self {
+            root: root.sorted(),
+        }
+    }
+
+    /// The rows to show, with the directories in `expanded` open.
+    pub fn rows(&self, expanded: &BTreeSet<PathBuf>) -> Vec<TreeRow> {
+        let mut rows = Vec::new();
+        self.root.emit(Path::new(""), 0, expanded, &mut rows);
+        rows
+    }
+}
+
+impl SortedDir {
     fn emit(
         &self,
         prefix: &Path,
@@ -88,9 +125,7 @@ impl Dir {
         expanded: &BTreeSet<PathBuf>,
         rows: &mut Vec<TreeRow>,
     ) {
-        let mut dirs: Vec<_> = self.dirs.iter().collect();
-        dirs.sort_by_cached_key(|(name, _)| sort_key(name));
-        for (name, dir) in dirs {
+        for (name, dir) in &self.dirs {
             let path = prefix.join(name);
             let is_open = expanded.contains(&path);
             rows.push(TreeRow {
@@ -104,9 +139,7 @@ impl Dir {
                 dir.emit(&path, depth + 1, expanded, rows);
             }
         }
-        let mut files: Vec<_> = self.files.iter().collect();
-        files.sort_by_cached_key(|name| sort_key(name));
-        for name in files {
+        for name in &self.files {
             rows.push(TreeRow {
                 path: prefix.join(name),
                 name: name.to_string_lossy().into_owned(),
@@ -116,6 +149,12 @@ impl Dir {
             });
         }
     }
+}
+
+/// The rows to show for `files` in one go (builds the index and throws it
+/// away: the app keeps the [`TreeIndex`] instead).
+pub fn tree_rows(files: &[PathBuf], expanded: &BTreeSet<PathBuf>) -> Vec<TreeRow> {
+    TreeIndex::build(files).rows(expanded)
 }
 
 /// Index of the row for the directory containing row `index`, if it has one.
@@ -277,5 +316,31 @@ mod tests {
     #[test]
     fn the_tree_starts_collapsed() {
         assert!(initially_expanded(&files(&["a/b.txt"])).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+
+    /// Run on demand: `cargo test -p lf-mide-core --release timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "prints timings"]
+    fn toggling_a_folder_in_a_huge_project() {
+        let files: Vec<PathBuf> = (0..200_000)
+            .map(|n| PathBuf::from(format!("module{}/src/pkg{}/File{n}.kt", n % 40, n % 500)))
+            .collect();
+        let expanded: BTreeSet<PathBuf> = [PathBuf::from("module3")].into();
+
+        let started = std::time::Instant::now();
+        let index = TreeIndex::build(&files);
+        println!(
+            "building the index over {} files (once per scan): {:?}",
+            files.len(),
+            started.elapsed()
+        );
+        let started = std::time::Instant::now();
+        let rows = index.rows(&expanded);
+        println!("a toggle ({} rows): {:?}", rows.len(), started.elapsed());
     }
 }

@@ -11,6 +11,7 @@ mod testing;
 mod tree;
 
 use lf_mide_core::layout::{BOTTOM_ROWS, HEADER_ROWS, MIN_BODY_ROWS, STATUS_ROWS};
+use lf_mide_core::text::visible as printable;
 use lf_mide_core::{
     AppState, BranchInfo, DoctorPanel, LineKind, Panel, ReportLine, Status, TerminalKind,
     popup_height,
@@ -182,7 +183,7 @@ fn render_doctor(frame: &mut Frame, state: &AppState) {
 }
 
 fn report_line(line: &ReportLine) -> Line<'static> {
-    let text = line.text.clone();
+    let text = printable(&line.text).into_owned();
     match line.kind {
         LineKind::Blank => Line::raw(""),
         LineKind::Heading | LineKind::Summary => Line::styled(
@@ -211,7 +212,7 @@ fn status_color(status: Status) -> Color {
 /// check has reported, so "no git repo" is never shown merely for not knowing.
 fn branch_text(state: &AppState) -> String {
     if state.branch_known {
-        branch_label(state.branch.as_ref())
+        printable(&branch_label(state.branch.as_ref())).into_owned()
     } else {
         "⎇ …".to_string()
     }
@@ -247,7 +248,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         ),
         Span::raw(" "),
         Span::styled(
-            state.project.name.clone(),
+            printable(&state.project.name).into_owned(),
             Style::new().add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -297,7 +298,7 @@ fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
     }
     if let Some(message) = &state.status {
         spans.push(Span::styled(
-            format!("│ {message} "),
+            format!("│ {} ", printable(message)),
             Style::new().fg(Color::Yellow),
         ));
     }
@@ -466,6 +467,31 @@ mod tests {
             .iter()
             .any(|cell| cell.symbol().chars().any(char::is_control));
         assert!(!has_control, "a control character reached the buffer");
+    }
+
+    #[test]
+    fn hidden_direction_characters_in_names_show_as_a_visible_mark() {
+        let trick = "invoice\u{202E}fdp.exe";
+        let mut s = crate::testing::with_files(state(), &[trick, "src/ok.kt"]);
+        s.status = Some(format!("Opened {trick}"));
+        s.project.name = "my\u{200B}app".to_string();
+        s.grep = Some(lf_mide_core::GrepState {
+            hits: std::sync::Arc::new(vec![lf_mide_core::GrepHit {
+                path: std::path::PathBuf::from(trick),
+                line: 3,
+                column: 0,
+                text: "let url = \"a\u{2066}b\"".to_string(),
+            }]),
+            searched: Some(String::new()),
+            ..lf_mide_core::GrepState::default()
+        });
+
+        let text = crate::testing::screen(&s);
+
+        assert!(text.contains("invoice\u{FFFD}fdp.exe"), "{text}");
+        assert!(text.contains("my\u{FFFD}app"));
+        assert!(text.contains("a\u{FFFD}b"));
+        assert!(!text.chars().any(lf_mide_core::text::is_hidden));
     }
 
     #[test]

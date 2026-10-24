@@ -94,7 +94,6 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         let grep_finished = actions
             .iter()
             .any(|a| matches!(a, Action::GrepResults { .. }));
-        let open_editor = actions.iter().any(|a| matches!(a, Action::OpenEditor));
         let terminal_before = state.config.terminal;
         let refresh_files = actions.iter().any(|a| matches!(a, Action::RefreshFiles));
         let opens = file_opens(&actions);
@@ -106,8 +105,10 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         if doctor_run_started(was_running, &state) {
             spawn_doctor(state.project.clone(), tx.clone());
         }
-        if open_editor {
+        // Neovim was asked for (by `e`, or by choosing a file with none open).
+        if state.editor_launch_wanted && !state.should_quit {
             spawn_editor(&state, tx.clone());
+            state = reduce(state, Action::EditorLaunchStarted);
         }
         if state.config.terminal != terminal_before {
             save_terminal_choice(state.config.terminal, &tx);
@@ -162,7 +163,16 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
         for query in to_run {
             effects::spawn_grep(state.project.root.clone(), query, tx.clone());
         }
-        // Without a running editor the reducer has already said so.
+        // Files chosen while Neovim was not running are handed over once it is.
+        if let (Some(socket), Some((path, line))) =
+            (state.editor_socket.clone(), state.pending_open.clone())
+        {
+            state = reduce(state, Action::PendingOpenSent);
+            let root = state.project.root.clone();
+            let patience = effects::open_patience(state.editor_ready);
+            effects::spawn_open(root, socket, path, line, patience, tx.clone());
+        }
+        // Without a running editor these wait in `pending_open` instead.
         if let Some(socket) = &state.editor_socket {
             for (path, line) in opens {
                 let root = state.project.root.clone();
@@ -171,11 +181,14 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             }
         }
     };
-    job_runner.cancel_all();
+    // Stop the things that start commands, then everything still running:
+    // a search or a tool being waited for would otherwise be left behind.
     watcher.abort();
     device_watch.abort();
     perf_watch.abort();
     git_watch.abort();
+    job_runner.cancel_all();
+    lf_mide_system::terminate_running_commands();
     result
 }
 
@@ -263,13 +276,15 @@ fn spawn_editor(state: &AppState, tx: UnboundedSender<Action>) {
     std::thread::spawn(move || {
         let sys = SystemRunner::with_timeout(EDITOR_LAUNCH_TIMEOUT);
         let Some(kind) = lf_mide_terminal::resolve(configured, &sys) else {
-            let _ = tx.send(Action::Status(LaunchError::Undetected.to_string()));
+            let _ = tx.send(Action::EditorLaunchFailed(
+                LaunchError::Undetected.to_string(),
+            ));
             return;
         };
         let prepared = match editor::prepare(&root, &std::env::temp_dir(), std::process::id()) {
             Ok(prepared) => prepared,
             Err(message) => {
-                let _ = tx.send(Action::Status(message));
+                let _ = tx.send(Action::EditorLaunchFailed(message));
                 return;
             }
         };
@@ -333,13 +348,13 @@ fn editor_result_action(
 ) -> Action {
     match result {
         Ok(Launched::Opened) => Action::EditorOpened(socket),
-        Ok(Launched::Manual { note, .. }) if copied => Action::Status(format!(
+        Ok(Launched::Manual { note, .. }) if copied => Action::EditorLaunchFailed(format!(
             "{note} Command copied to the clipboard: split a pane and paste it."
         )),
         Ok(Launched::Manual { note, command }) => {
-            Action::Status(format!("{note} Run in a new pane: {command}"))
+            Action::EditorLaunchFailed(format!("{note} Run in a new pane: {command}"))
         }
-        Err(err) => Action::Status(err.to_string()),
+        Err(err) => Action::EditorLaunchFailed(err.to_string()),
     }
 }
 
@@ -462,8 +477,8 @@ mod tests {
     fn a_manual_launch_says_the_command_is_on_the_clipboard() {
         let action = editor_result_action(PathBuf::from("/tmp/s"), Ok(manual()), true);
 
-        let Action::Status(message) = action else {
-            panic!("expected a status")
+        let Action::EditorLaunchFailed(message) = action else {
+            panic!("expected the launch to be reported as not done")
         };
         assert!(
             message.starts_with("Ghostty can't be controlled"),
@@ -480,8 +495,8 @@ mod tests {
     fn a_manual_launch_shows_the_command_when_copying_failed() {
         let action = editor_result_action(PathBuf::from("/tmp/s"), Ok(manual()), false);
 
-        let Action::Status(message) = action else {
-            panic!("expected a status")
+        let Action::EditorLaunchFailed(message) = action else {
+            panic!("expected the launch to be reported as not done")
         };
         assert!(message.ends_with("cd '/p' && exec 'nvim'"), "{message}");
     }
@@ -496,7 +511,7 @@ mod tests {
 
         assert_eq!(
             action,
-            Action::Status(LaunchError::NotInsideTmux.to_string())
+            Action::EditorLaunchFailed(LaunchError::NotInsideTmux.to_string())
         );
     }
 }

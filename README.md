@@ -224,8 +224,18 @@ Symbolic links are never followed or listed. Up to 200,000 files are listed. The
 130 ms. Search needs [ripgrep](https://github.com/BurntSushi/ripgrep) and
 ignores your own ripgrep config, so results are the same for everyone.
 
-Choosing a file sends it to the Neovim that `e` opened, over its RPC socket. The file name is passed as raw bytes and
+Choosing a file sends it to the Neovim that `e` opened, over its RPC socket. If no Neovim is running yet, LF-Mide
+starts one in a split pane and opens the file (at the matching line for a search hit) as soon as it is up; a second
+choice while it is starting just replaces the file waiting to open. If Neovim cannot be started, the status line says
+why. The file name is passed as raw bytes and
 used only as data (never as part of a Neovim command), so names like `100%.txt` or `a b#c.kt` open correctly.
+
+File and folder names are shown as they are, except that characters which could make a name read differently from
+what it is (right-to-left overrides, zero-width marks, control characters) appear as a visible `�`. Quitting LF-Mide
+also stops a search or tool command that is still running, instead of leaving it behind. A project folder (or file
+names inside it) that is not valid text, as can happen on network or foreign disks, is searched and built using
+relative paths, so it is not mangled on the way to ripgrep, Gradle or Xcode. The file tree keeps an ordered index of the
+project, so opening or closing a folder takes microseconds even with 200,000 files.
 
 ## Terminal and the editor split
 

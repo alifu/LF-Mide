@@ -131,6 +131,7 @@ pub(crate) fn run_step(
     sys: &dyn System,
     cancel: &CancelFlag,
     report: &mut dyn Report,
+    dir: Option<&Path>,
     program: &str,
     args: &[&str],
     what: &str,
@@ -139,9 +140,11 @@ pub(crate) fn run_step(
         return Err(Stop::Cancelled);
     }
     report.lines(vec![format!("$ {program} {}", args.join(" "))]);
-    let output = sys
-        .run(program, args)
-        .map_err(|error| failed(format!("{what}: {error}")))?;
+    let output = match dir {
+        Some(dir) => sys.run_in(dir, program, args),
+        None => sys.run(program, args),
+    }
+    .map_err(|error| failed(format!("{what}: {error}")))?;
     let text = output.text();
     if !text.is_empty() {
         report.lines(text.lines().map(str::to_string).collect());

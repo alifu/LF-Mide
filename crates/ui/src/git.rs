@@ -9,6 +9,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 
+use lf_mide_core::text::visible as printable;
+
 use crate::search::{centered, window_top};
 use crate::{ACCENT, MUTED};
 
@@ -63,7 +65,10 @@ fn change_line(change: &FileChange, selected: bool) -> Line<'static> {
             change.kind.letter().to_string(),
             Style::new().fg(kind_color(change.kind)),
         ),
-        Span::styled(format!(" {}", change.path.display()), style),
+        Span::styled(
+            format!(" {}", printable(&change.path.to_string_lossy())),
+            style,
+        ),
     ])
 }
 
@@ -85,8 +90,8 @@ pub(crate) fn render_diff(frame: &mut Frame, state: &AppState) {
     let block = Block::bordered()
         .title(format!(
             " Diff · {} vs {} ",
-            view.path.display(),
-            view.base.label
+            printable(&view.path.to_string_lossy()),
+            printable(&view.base.label)
         ))
         .border_style(Style::new().fg(ACCENT));
     let inner = block.inner(popup);
@@ -148,7 +153,10 @@ fn body_lines(view: &DiffView, rows: usize, width: usize) -> Vec<Line<'static>> 
         return vec![muted("Binary or very large file: no text to compare")];
     }
     if diff.is_empty() {
-        return vec![muted(&format!("No differences from {}", view.base.label))];
+        return vec![muted(&format!(
+            "No differences from {}",
+            printable(&view.base.label)
+        ))];
     }
     let mut lines = if view.side_by_side {
         side_by_side_lines(view, diff, rows, width)
@@ -308,7 +316,7 @@ fn render_picker(frame: &mut Frame, state: &AppState, view: &DiffView) {
                 let chosen = if *base == view.base { "● " } else { "  " };
                 Line::from(vec![
                     Span::styled(pointer, Style::new().fg(ACCENT)),
-                    Span::raw(format!("{chosen}{}", base.label)),
+                    Span::raw(format!("{chosen}{}", printable(&base.label))),
                 ])
             })
             .collect()

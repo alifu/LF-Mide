@@ -13,6 +13,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use lf_mide_core::text::visible as printable;
+
 use crate::{ACCENT, MUTED, panel_block};
 
 /// Rows of the panel used by the tab line.
@@ -218,7 +220,7 @@ fn styled_log_line(tab: OutputTab, line: &str) -> Line<'static> {
         _ => None,
     };
     let style = color.map_or(Style::default(), |color| Style::new().fg(color));
-    Line::from(Span::styled(line.to_string(), style))
+    Line::from(Span::styled(printable(line).into_owned(), style))
 }
 
 fn build_color(line: &str) -> Option<Color> {
@@ -281,7 +283,7 @@ fn problem_line(root: &Path, problem: &Problem, selected: bool, width: usize) ->
     let place = location_text(root, problem);
     let used = 2 + glyph.chars().count() + 1 + place.chars().count() + 2;
     let room = width.saturating_sub(used);
-    let message: String = problem.message.chars().take(room).collect();
+    let message: String = printable(&problem.message).chars().take(room).collect();
     let mut style = Style::default();
     if selected {
         style = style.add_modifier(Modifier::BOLD);
@@ -302,6 +304,7 @@ fn location_text(root: &Path, problem: &Problem) -> String {
     let shown = Path::new(path)
         .strip_prefix(root)
         .map_or_else(|_| path.clone(), |relative| relative.display().to_string());
+    let shown = printable(&shown).into_owned();
     match (problem.line, problem.column) {
         (Some(line), Some(column)) => format!("{shown}:{line}:{column}"),
         (Some(line), None) => format!("{shown}:{line}"),

@@ -1,5 +1,6 @@
 //! The Files panel: the project's file tree.
 
+use lf_mide_core::text::visible as printable;
 use lf_mide_core::{AppState, Panel};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -44,7 +45,7 @@ pub(crate) fn render_tree(frame: &mut Frame, area: Rect, state: &AppState) {
                 (true, false) => "▸ ",
                 (false, _) => "  ",
             };
-            let text = format!("{}{marker}{}", "  ".repeat(row.depth), row.name);
+            let text = format!("{}{marker}{}", "  ".repeat(row.depth), printable(&row.name));
             let style = if index == state.tree_selected && focused {
                 Style::new().add_modifier(Modifier::REVERSED)
             } else if index == state.tree_selected {

@@ -1,6 +1,6 @@
 //! Project-wide text search through ripgrep.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lf_mide_core::GrepHit;
 use lf_mide_core::nav::clean_relative;
@@ -29,7 +29,7 @@ pub enum GrepError {
 
 /// The ripgrep arguments for searching `root` for `query`. The query is
 /// passed after `-e`, so a leading `-` is part of the pattern, never a flag.
-pub fn grep_args(root: &Path, query: &str) -> Vec<String> {
+pub fn grep_args(query: &str) -> Vec<String> {
     let mut args: Vec<String> = [
         "--no-config",
         "--json",
@@ -57,13 +57,16 @@ pub fn grep_args(root: &Path, query: &str) -> Vec<String> {
         args.push(format!("!{dir}/"));
     }
     args.extend(["-e", query, "--"].map(String::from));
-    args.push(root.to_string_lossy().into_owned());
+    // The search runs inside the project folder and looks at `.`: the folder
+    // is never written out as an argument, so a path that is not valid text
+    // works, and results come back relative to it.
+    args.push(".".to_string());
     args
 }
 
 /// Hits from ripgrep's `--json` output, paths made relative to `root`.
 /// Lines that are not complete JSON (for example output cut off at a size
-/// limit) and matches in paths that are not valid UTF-8 are skipped.
+/// limit) are skipped, and so are paths outside the project.
 pub fn parse_hits(output: &str, root: &Path, limit: usize) -> Vec<GrepHit> {
     output
         .lines()
@@ -74,9 +77,53 @@ pub fn parse_hits(output: &str, root: &Path, limit: usize) -> Vec<GrepHit> {
         .collect()
 }
 
+/// The path ripgrep reports: text, or (for names that are not valid text)
+/// the raw bytes in base64.
+fn reported_path(data: &Value) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+
+    if let Some(text) = data["path"]["text"].as_str() {
+        return Some(PathBuf::from(text));
+    }
+    let bytes = decode_base64(data["path"]["bytes"].as_str()?)?;
+    Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+}
+
+/// Standard base64 with or without padding; `None` for anything else.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(text.len() / 4 * 3);
+    let mut bits = 0u32;
+    let mut have = 0;
+    for ch in text.trim_end_matches('=').chars() {
+        let value = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 26,
+            '0'..='9' => ch as u32 - '0' as u32 + 52,
+            '+' => 62,
+            '/' => 63,
+            _ => return None,
+        };
+        bits = (bits << 6) | value;
+        have += 6;
+        if have >= 8 {
+            have -= 8;
+            bytes.push((bits >> have) as u8);
+            bits &= (1 << have) - 1;
+        }
+    }
+    Some(bytes)
+}
+
 fn hit_from(data: &Value, root: &Path) -> Option<GrepHit> {
-    let absolute = data["path"]["text"].as_str()?;
-    let path = clean_relative(Path::new(absolute).strip_prefix(root).ok()?)?;
+    let reported = reported_path(data)?;
+    // Relative to the folder it ran in (`./src/App.kt`); an absolute path
+    // must lie inside the project.
+    let relative = if reported.is_absolute() {
+        reported.strip_prefix(root).ok()?.to_path_buf()
+    } else {
+        reported
+    };
+    let path = clean_relative(&relative)?;
     let line = u32::try_from(data["line_number"].as_u64()?).ok()?;
     let column = data["submatches"][0]["start"]
         .as_u64()
@@ -132,9 +179,9 @@ pub fn grep(
     if query.trim().is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let args = grep_args(root, query);
+    let args = grep_args(query);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match sys.run("rg", &args) {
+    match sys.run_in(root, "rg", &args) {
         Err(RunError::NotFound) => Err(GrepError::RgMissing),
         Err(RunError::TimedOut) => Err(GrepError::TimedOut),
         Err(RunError::Other(message)) => Err(GrepError::Failed(message)),
@@ -178,12 +225,20 @@ mod tests {
 
     #[test]
     fn args_search_the_root_with_the_query_after_dash_e() {
-        let args = grep_args(Path::new(ROOT), "-rf evil");
+        let args = grep_args("-rf evil");
 
         let e = args.iter().position(|a| a == "-e").unwrap();
         assert_eq!(args[e + 1], "-rf evil");
         assert_eq!(args[e + 2], "--");
-        assert_eq!(args.last().unwrap(), ROOT);
+        assert_eq!(
+            args.last().unwrap(),
+            ".",
+            "searched from inside the project"
+        );
+        assert!(
+            !args.iter().any(|a| a == ROOT),
+            "the folder is never an argument"
+        );
         assert!(args.contains(&"--json".to_string()));
         assert!(
             args.contains(&"--no-config".to_string()),
@@ -194,7 +249,7 @@ mod tests {
 
     #[test]
     fn args_exclude_the_same_directories_as_the_file_scan() {
-        let args = grep_args(Path::new(ROOT), "x");
+        let args = grep_args("x");
 
         for dir in EXCLUDED_DIRS {
             // A trailing slash makes the glob match directories only, so a
@@ -207,7 +262,7 @@ mod tests {
 
     #[test]
     fn args_bound_the_work_ripgrep_does_on_hostile_files_and_match_the_scan_rules() {
-        let args = grep_args(Path::new(ROOT), "x");
+        let args = grep_args("x");
 
         let at = args
             .iter()
@@ -247,14 +302,46 @@ mod tests {
     fn skips_incomplete_or_foreign_lines() {
         let truncated = &sample()[..sample().len() - 20];
         let outside = r#"{"type":"match","data":{"path":{"text":"/elsewhere/x.kt"},"lines":{"text":"a\n"},"line_number":1,"submatches":[]}}"#;
-        let bytes_path = r#"{"type":"match","data":{"path":{"bytes":"Y2Fm6Q=="},"lines":{"text":"a\n"},"line_number":1,"submatches":[]}}"#;
         let junk = "not json at all\n{\"type\":\n";
-        let input = format!("{junk}{outside}\n{bytes_path}\n{truncated}");
+        let escaping = r#"{"type":"match","data":{"path":{"text":"../secret.kt"},"lines":{"text":"a\n"},"line_number":1,"submatches":[]}}"#;
+        let input = format!("{junk}{outside}\n{escaping}\n{truncated}");
 
         let hits = parse_hits(&input, Path::new(ROOT), 100);
 
         assert_eq!(hits.len(), 2, "{hits:?}");
         assert!(hits.iter().all(|h| !h.path.is_absolute()));
+    }
+
+    #[test]
+    fn paths_relative_to_the_search_folder_are_understood() {
+        let line = r#"{"type":"match","data":{"path":{"text":"./src/App.kt"},"lines":{"text":"x\n"},"line_number":4,"submatches":[]}}"#;
+
+        let hits = parse_hits(line, Path::new(ROOT), 5);
+
+        assert_eq!(hits[0].path, PathBuf::from("src/App.kt"));
+    }
+
+    #[test]
+    fn a_name_that_is_not_valid_text_comes_back_byte_for_byte() {
+        use std::os::unix::ffi::OsStrExt;
+
+        // "dir/caf\xe9.kt" in Latin-1: not valid UTF-8.
+        let line = r#"{"type":"match","data":{"path":{"bytes":"Li9kaXIvY2Fm6S5rdA=="},"lines":{"text":"x\n"},"line_number":2,"submatches":[]}}"#;
+
+        let hits = parse_hits(line, Path::new(ROOT), 5);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path.as_os_str().as_bytes(), b"dir/caf\xe9.kt");
+    }
+
+    #[test]
+    fn base64_is_decoded_with_or_without_padding_and_bad_input_is_refused() {
+        assert_eq!(decode_base64("aGk=").unwrap(), b"hi");
+        assert_eq!(decode_base64("aGk").unwrap(), b"hi");
+        assert_eq!(decode_base64("aGVsbG8gd29ybGQ=").unwrap(), b"hello world");
+        assert_eq!(decode_base64("").unwrap(), b"");
+        assert_eq!(decode_base64("a*k="), None);
+        assert_eq!(decode_base64("aGk\n"), None);
     }
 
     #[test]
@@ -277,15 +364,20 @@ mod tests {
         assert_eq!(hits[0].column, 0);
     }
 
-    fn key(root: &str, query: &str) -> String {
-        format!("rg {}", grep_args(Path::new(root), query).join(" "))
+    fn key(query: &str) -> String {
+        format!("rg {}", grep_args(query).join(" "))
     }
 
     #[test]
     fn grep_returns_the_parsed_hits() {
-        let sys = FakeSystem::new().ok(&key(ROOT, "setActive"), &sample());
+        let sys = FakeSystem::new().ok(&key("setActive"), &sample());
 
         let hits = grep(&sys, Path::new(ROOT), "setActive", 50).unwrap();
+        assert_eq!(
+            sys.ran_in()[0].0,
+            Path::new(ROOT),
+            "ripgrep runs inside the project folder"
+        );
 
         assert_eq!(hits.len(), 2);
     }
@@ -304,7 +396,7 @@ mod tests {
             line("m/b.kt", 5),
         ]
         .join("\n");
-        let sys = FakeSystem::new().ok(&key(ROOT, "x"), &output);
+        let sys = FakeSystem::new().ok(&key("x"), &output);
 
         let hits = grep(&sys, Path::new(ROOT), "x", 50).unwrap();
 
@@ -339,7 +431,7 @@ mod tests {
             line("b.kt", 3),
         ]
         .join("\n");
-        let sys = FakeSystem::new().ok(&key(ROOT, "x"), &output);
+        let sys = FakeSystem::new().ok(&key("x"), &output);
 
         let hits = grep(&sys, Path::new(ROOT), "x", 2).unwrap();
 
@@ -349,7 +441,7 @@ mod tests {
 
     #[test]
     fn grep_treats_no_matches_as_an_empty_result_and_blank_queries_as_nothing_to_do() {
-        let sys = FakeSystem::new().exits_nonzero(&key(ROOT, "zzz"));
+        let sys = FakeSystem::new().exits_nonzero(&key("zzz"));
 
         assert_eq!(grep(&sys, Path::new(ROOT), "zzz", 50), Ok(vec![]));
         assert_eq!(
@@ -361,7 +453,7 @@ mod tests {
     #[test]
     fn grep_explains_a_bad_pattern_in_one_line() {
         let stderr = "rg: regex parse error:\n    (?:()\n    ^\nerror: unclosed group\n";
-        let sys = FakeSystem::new().fails(&key(ROOT, "("), stderr);
+        let sys = FakeSystem::new().fails(&key("("), stderr);
 
         let err = grep(&sys, Path::new(ROOT), "(", 50).unwrap_err();
 
@@ -374,7 +466,7 @@ mod tests {
             grep(&FakeSystem::new(), Path::new(ROOT), "x", 5),
             Err(GrepError::RgMissing)
         );
-        let slow = FakeSystem::new().timeout(&key(ROOT, "x"));
+        let slow = FakeSystem::new().timeout(&key("x"));
         assert_eq!(
             grep(&slow, Path::new(ROOT), "x", 5),
             Err(GrepError::TimedOut)
@@ -385,7 +477,7 @@ mod tests {
     fn grep_keeps_partial_results_when_ripgrep_also_printed_warnings() {
         // e.g. one unreadable file: exit code 2, but matches were found.
         let sys = FakeSystem::new().fails_with_output(
-            &key(ROOT, "setActive"),
+            &key("setActive"),
             &sample(),
             "rg: /work/pos/secret: Permission denied\n",
         );

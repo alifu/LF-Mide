@@ -2,6 +2,7 @@
 //! environment overlay.
 
 use lf_mide_core::layout::DEVICE_PANEL_HEADER_ROWS;
+use lf_mide_core::text::visible as printable;
 use std::path::Path;
 
 use lf_mide_core::{AppState, Device, DeviceState, Panel, Platform, ToolInfo, display_path};
@@ -22,7 +23,9 @@ const INFO_WIDTH: u16 = 84;
 pub(crate) fn target_summary(state: &AppState) -> String {
     let device = state
         .selected_device()
-        .map_or("no device", |d| d.name.as_str());
+        .map_or(std::borrow::Cow::Borrowed("no device"), |d| {
+            printable(&d.name)
+        });
     format!("{} · {device}", state.target.label())
 }
 
@@ -115,7 +118,7 @@ fn device_row(device: &Device, selected: bool, width: usize) -> Line<'static> {
     let mut spans = vec![
         Span::styled(if selected { "▶" } else { " " }, Style::new().fg(ACCENT)),
         state_marker(device.state),
-        Span::styled(format!(" {}", device.name), name_style),
+        Span::styled(format!(" {}", printable(&device.name)), name_style),
     ];
     // Pointer, state marker, a space and the name come first; the detail
     // gets whatever width is left.

@@ -222,9 +222,9 @@ pub fn blame_text(line: &BlameLine, now: i64) -> String {
 const TAB_WIDTH: usize = 4;
 
 /// Repository text made safe to show: tabs become spaces (indentation must
-/// survive), other control characters and invisible direction/format
-/// characters (which can make text read differently from what it is) are
-/// removed, and the length is bounded.
+/// survive), control characters and invisible direction/format
+/// characters (which can make text read differently from what it is, as in
+/// "Trojan Source" attacks) become a visible `�`, and the length is bounded.
 pub fn clean_text(text: &str) -> String {
     let mut out = String::new();
     let mut shown = 0;
@@ -236,24 +236,19 @@ pub fn clean_text(text: &str) -> String {
             let spaces = TAB_WIDTH.min(MAX_TEXT_CHARS - shown);
             out.extend(std::iter::repeat_n(' ', spaces));
             shown += spaces;
-        } else if !ch.is_control() && !is_invisible(ch) {
-            out.push(ch);
+        } else if crate::text::is_hidden(ch) {
+            out.push(crate::text::REPLACEMENT);
+            shown += 1;
+        } else {
+            out.push(if ch.is_control() {
+                crate::text::REPLACEMENT
+            } else {
+                ch
+            });
             shown += 1;
         }
     }
     out
-}
-
-/// Zero-width, bidirectional-control and line-separator characters.
-fn is_invisible(ch: char) -> bool {
-    matches!(
-        ch,
-        '\u{200B}'..='\u{200F}'
-            | '\u{2028}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-    )
 }
 
 const MINUTE: i64 = 60;
@@ -498,7 +493,12 @@ mod tests {
 
     #[test]
     fn tabs_become_spaces_so_indentation_survives() {
-        assert_eq!(clean_text("\tif (x) {\n"), "    if (x) {");
+        assert_eq!(clean_text("\tif (x) {"), "    if (x) {");
+        assert_eq!(
+            clean_text("a\nb"),
+            "a\u{FFFD}b",
+            "a stray line break is shown, not hidden"
+        );
         assert_eq!(clean_text("a\tb"), "a    b");
         assert_eq!(
             clean_text("\t".repeat(1000).as_str()).chars().count(),
@@ -510,7 +510,10 @@ mod tests {
     fn direction_tricks_and_zero_width_characters_are_removed() {
         let trick = "access\u{202E}fdp.exe \u{200B}x\u{2066}y\u{FEFF}";
 
-        assert_eq!(clean_text(trick), "accessfdp.exe xy");
+        assert_eq!(
+            clean_text(trick),
+            "access\u{FFFD}fdp.exe \u{FFFD}x\u{FFFD}y\u{FFFD}"
+        );
         assert_eq!(clean_text("naïve 日本語 ✓"), "naïve 日本語 ✓");
     }
 

@@ -1,5 +1,6 @@
 //! The fuzzy file finder and the project search, drawn as overlays.
 
+use lf_mide_core::text::visible as printable;
 use lf_mide_core::{AppState, FileMatch, GrepState};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -150,7 +151,7 @@ fn finder_row(selected: bool, found: &FileMatch) -> Line<'static> {
     };
     highlighted_line(
         &format!("{} ", pointer(selected)),
-        &found.path.to_string_lossy(),
+        &printable(&found.path.to_string_lossy()),
         &found.indices,
         base,
     )
@@ -181,9 +182,9 @@ pub(crate) fn render_grep(frame: &mut Frame, state: &AppState) {
             let text = format!(
                 "{} {}:{}  {}",
                 pointer(selected),
-                hit.path.display(),
+                printable(&hit.path.to_string_lossy()),
                 hit.line,
-                hit.text
+                printable(&hit.text)
             );
             Line::styled(text, style)
         })
@@ -197,7 +198,7 @@ fn grep_status(grep: &GrepState) -> Line<'static> {
         return Line::styled("Searching…", muted);
     }
     if let Some(error) = &grep.error {
-        return Line::styled(error.clone(), Style::new().fg(Color::Red));
+        return Line::styled(printable(error).into_owned(), Style::new().fg(Color::Red));
     }
     match (grep.searched.is_some(), grep.hits.len()) {
         (false, _) => Line::styled("Enter to search", muted),

@@ -101,6 +101,40 @@ mod tests {
     }
 
     #[test]
+    fn a_program_named_relative_to_the_working_folder_runs_from_there() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let script = tmp.path().join("gradlew");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho \"in $(basename \"$PWD\") with $1\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let spec = StreamSpec {
+            program: "./gradlew".into(),
+            args: vec!["--console=plain".into()],
+            cwd: Some(tmp.path().to_path_buf()),
+            ..StreamSpec::default()
+        };
+        let mut seen = Vec::new();
+
+        let exit = ProcessStreamer::default()
+            .stream(&spec, &CancelFlag::default(), &mut |l| seen.extend(l))
+            .unwrap();
+
+        assert!(exit.success());
+        let folder = tmp
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(seen, [format!("in {folder} with --console=plain")]);
+    }
+
+    #[test]
     fn a_cancel_request_stops_a_long_command() {
         let cancel = CancelFlag::default();
         let remote = cancel.clone();

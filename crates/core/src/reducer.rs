@@ -10,7 +10,7 @@ use crate::devices::{Device, DeviceState, Platform};
 use crate::doctor::{Report, popup_content_rows};
 use crate::git_reducer;
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
-use crate::nav::{parent_row, tree_rows};
+use crate::nav::{TreeIndex, parent_row};
 use crate::output_reducer;
 use crate::perf_reducer;
 use crate::state::{
@@ -124,11 +124,33 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             terminal_picker: None,
             ..state
         },
+        Action::OpenEditor if state.editor_launching => AppState {
+            status: Some("Neovim is already opening…".to_string()),
+            ..state
+        },
         Action::OpenEditor => AppState {
             status: Some("Opening Neovim…".to_string()),
+            editor_launching: true,
+            editor_launch_wanted: true,
+            ..state
+        },
+        Action::EditorLaunchStarted => AppState {
+            editor_launch_wanted: false,
+            ..state
+        },
+        Action::EditorLaunchFailed(message) => AppState {
+            editor_launching: false,
+            editor_launch_wanted: false,
+            pending_open: None,
+            status: Some(message),
+            ..state
+        },
+        Action::PendingOpenSent => AppState {
+            pending_open: None,
             ..state
         },
         Action::EditorOpened(socket) => AppState {
+            editor_launching: false,
             editor_socket: Some(socket),
             // A new Neovim starts without signs.
             marks_key: None,
@@ -145,6 +167,9 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             },
             path,
         ),
+        // Something found the old Neovim gone. A launch that is already under
+        // way (the user pressed `e`, or chose a file) is not affected: it
+        // still has to finish, and the file waiting for it still opens.
         Action::EditorLost => AppState {
             editor_socket: None,
             marks_key: None,
@@ -153,6 +178,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             ..state
         },
         Action::FilesLoaded(files) => rebuild_tree(AppState {
+            tree_index: Arc::new(TreeIndex::build(&files)),
             files,
             files_loading: false,
             ..state
@@ -428,15 +454,23 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 }
             })
         }),
-        Action::OpenFile { path, .. } => {
+        Action::OpenFile { path, line } => {
+            // Choosing a file ends whatever overlay it was chosen in.
             if state.editor_socket.is_none() {
-                // Keep the overlay and its query: press e, then choose again.
+                // No Neovim yet: start one (unless one is on its way) and
+                // open the file the moment it answers.
+                let start = !state.editor_launching;
                 return AppState {
-                    status: Some("Press e to open the editor first".to_string()),
+                    status: Some(format!("Opening Neovim, then {}…", path.display())),
+                    pending_open: Some((path, line)),
+                    editor_launching: true,
+                    editor_launch_wanted: state.editor_launch_wanted || start,
+                    finder: None,
+                    grep: None,
+                    diff: None,
                     ..state
                 };
             }
-            // Choosing a file ends whatever overlay it was chosen in.
             AppState {
                 status: Some(format!("Opening {}…", path.display())),
                 finder: None,
@@ -789,7 +823,7 @@ fn rebuild_tree(state: AppState) -> AppState {
         .tree
         .get(state.tree_selected)
         .map(|row| row.path.clone());
-    let rows = tree_rows(&state.files, &state.expanded);
+    let rows = state.tree_index.rows(&state.expanded);
     let selected = previous
         .and_then(|path| rows.iter().position(|row| row.path == path))
         .unwrap_or_else(|| state.tree_selected.min(rows.len().saturating_sub(1)));
@@ -1293,7 +1327,12 @@ mod tests {
             },
         );
 
-        assert!(without.status.unwrap().contains("Press e"));
+        assert!(
+            without
+                .status
+                .unwrap()
+                .contains("Opening Neovim, then a.txt")
+        );
         assert!(with.status.unwrap().contains("a.txt"));
     }
 
@@ -1614,28 +1653,128 @@ mod tests {
         );
     }
 
+    fn choose(state: AppState, name: &str, line: Option<u32>) -> AppState {
+        reduce(
+            state,
+            Action::OpenFile {
+                path: PathBuf::from(name),
+                line,
+            },
+        )
+    }
+
     #[test]
-    fn choosing_a_file_without_an_editor_keeps_the_overlay_and_its_query() {
+    fn choosing_a_file_without_an_editor_starts_one_and_remembers_the_file() {
         let finder = finder_with("itemdet", &["a.kt"]);
 
-        let after = reduce(
-            finder,
-            Action::OpenFile {
-                path: PathBuf::from("a.kt"),
-                line: None,
-            },
+        let after = choose(finder, "a.kt", Some(7));
+
+        assert!(after.finder.is_none(), "the choice ends the overlay");
+        assert_eq!(after.pending_open, Some((PathBuf::from("a.kt"), Some(7))));
+        assert!(after.editor_launching && after.editor_launch_wanted);
+        assert_eq!(after.status.as_deref(), Some("Opening Neovim, then a.kt…"));
+    }
+
+    #[test]
+    fn a_second_choice_while_neovim_is_starting_only_replaces_the_file() {
+        let first = choose(state(), "a.kt", None);
+        let started = reduce(first, Action::EditorLaunchStarted);
+        assert!(!started.editor_launch_wanted && started.editor_launching);
+
+        let second = choose(started, "b.kt", Some(2));
+
+        assert_eq!(second.pending_open, Some((PathBuf::from("b.kt"), Some(2))));
+        assert!(!second.editor_launch_wanted, "no second Neovim");
+    }
+
+    #[test]
+    fn pressing_e_twice_does_not_start_two_neovims() {
+        let first = reduce(state(), Action::OpenEditor);
+        assert!(first.editor_launch_wanted && first.editor_launching);
+        let started = reduce(first, Action::EditorLaunchStarted);
+
+        let again = reduce(started, Action::OpenEditor);
+
+        assert!(!again.editor_launch_wanted);
+        assert!(again.status.unwrap().contains("already opening"));
+    }
+
+    #[test]
+    fn when_neovim_is_up_the_waiting_file_stays_queued_until_it_is_handed_over() {
+        let waiting = reduce(
+            choose(state(), "a.kt", Some(3)),
+            Action::EditorLaunchStarted,
         );
 
-        assert!(after.status.as_deref().unwrap().contains("Press e"));
+        let up = reduce(waiting, Action::EditorOpened(PathBuf::from("/tmp/s")));
+        assert!(!up.editor_launching);
+        assert_eq!(up.pending_open, Some((PathBuf::from("a.kt"), Some(3))));
+        let handed = reduce(up, Action::PendingOpenSent);
+
+        assert_eq!(handed.pending_open, None);
+        assert!(handed.editor_socket.is_some());
+    }
+
+    #[test]
+    fn a_launch_that_fails_drops_the_file_and_says_why() {
+        let waiting = reduce(choose(state(), "a.kt", None), Action::EditorLaunchStarted);
+
+        let failed = reduce(
+            waiting,
+            Action::EditorLaunchFailed("tmux is not running".into()),
+        );
+
+        assert_eq!(failed.pending_open, None);
+        assert!(!failed.editor_launching && !failed.editor_launch_wanted);
+        assert_eq!(failed.status.as_deref(), Some("tmux is not running"));
+        // The next choice may try again.
+        assert!(choose(failed, "b.kt", None).editor_launch_wanted);
+    }
+
+    #[test]
+    fn a_neovim_found_gone_does_not_cancel_a_launch_that_is_already_under_way() {
+        let mut waiting = choose(state(), "a.kt", None);
+        waiting.editor_socket = None;
+        let started = reduce(waiting, Action::EditorLaunchStarted);
+
+        let lost = reduce(started, Action::EditorLost);
+
+        assert_eq!(lost.pending_open, Some((PathBuf::from("a.kt"), None)));
+        assert!(lost.editor_launching, "no second Neovim may be started");
+        // And pressing e or choosing again does not start another.
+        let again = choose(reduce(lost, Action::OpenEditor), "b.kt", None);
+        assert!(!again.editor_launch_wanted);
+    }
+
+    #[test]
+    fn a_dead_neovim_is_forgotten_but_nothing_waits_for_it() {
+        let mut s = state();
+        s.editor_socket = Some(PathBuf::from("/tmp/dead.sock"));
+        s.editor_ready = true;
+
+        let lost = reduce(s, Action::EditorLost);
+
+        assert_eq!(lost.editor_socket, None);
+        assert!(!lost.editor_ready && !lost.editor_launching);
+        // The next choice starts a fresh Neovim.
+        assert!(choose(lost, "a.kt", None).editor_launch_wanted);
+    }
+
+    #[test]
+    fn with_a_running_neovim_nothing_waits() {
+        let mut s = state();
+        s.editor_socket = Some(PathBuf::from("/tmp/s"));
+
+        let after = choose(s, "a.kt", None);
+
         assert_eq!(
-            after.finder.unwrap().query,
-            "itemdet",
-            "the user can press e, then choose again"
+            (after.pending_open, after.editor_launch_wanted),
+            (None, false)
         );
     }
 
     #[test]
-    fn the_search_overlay_also_survives_a_missing_editor() {
+    fn a_search_hit_chosen_without_an_editor_opens_neovim_at_that_line() {
         let s = reduce(grep_typed("setActive"), Action::GrepSearch);
 
         let after = reduce(
@@ -1646,7 +1785,9 @@ mod tests {
             },
         );
 
-        assert_eq!(after.grep.unwrap().query, "setActive");
+        assert!(after.grep.is_none());
+        assert_eq!(after.pending_open, Some((PathBuf::from("a.kt"), Some(3))));
+        assert!(after.editor_launch_wanted);
     }
 
     #[test]

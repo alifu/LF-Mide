@@ -18,6 +18,8 @@ pub struct FakeSystem {
     /// (link, target): any path under `link` canonicalizes under `target`.
     symlinks: Vec<(PathBuf, PathBuf)>,
     footprints: HashMap<u32, u64>,
+    /// `(folder, "program arg arg")` for each `run_in`.
+    ran_in: std::sync::Mutex<Vec<(PathBuf, String)>>,
 }
 
 fn key(program: &str, args: &[&str]) -> String {
@@ -91,6 +93,11 @@ impl FakeSystem {
     }
 
     /// What was passed to `spawn` so far, in order.
+    /// The folders and commands passed to `run_in`.
+    pub fn ran_in(&self) -> Vec<(PathBuf, String)> {
+        self.ran_in.lock().unwrap().clone()
+    }
+
     pub fn spawned(&self) -> Vec<String> {
         self.spawned.lock().unwrap().clone()
     }
@@ -145,6 +152,16 @@ impl System for FakeSystem {
             .get(&key(program, args))
             .cloned()
             .unwrap_or(Err(RunError::NotFound))
+    }
+
+    fn run_in(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output, RunError> {
+        self.ran_in
+            .lock()
+            .unwrap()
+            .push((dir.to_path_buf(), key(program, args)));
+        // Commands are scripted by program and arguments; the folder is not
+        // part of the script.
+        self.run(program, args)
     }
 
     fn spawn(&self, program: &str, args: &[&str]) -> Result<(), RunError> {

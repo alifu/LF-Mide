@@ -18,6 +18,9 @@ const PRODUCTS_DIR: &str = "Build/Products/Debug-iphonesimulator";
 pub(crate) struct XcodeContainer {
     pub flag: &'static str,
     pub path: PathBuf,
+    /// The same, relative to the project folder: what goes on a command
+    /// line (which runs in the project folder).
+    pub relative: PathBuf,
     /// File name without the extension.
     pub stem: String,
 }
@@ -34,8 +37,8 @@ pub(crate) fn run(
         return Err(failed(format!("{} has an unusual id", ctx.device.name)));
     }
     let container = find_container(ctx.root, sys).map_err(failed)?;
-    let scheme = pick_scheme(&container, sys, cancel, report)?;
-    let container_path = container.path.display().to_string();
+    let scheme = pick_scheme(&container, ctx.root, sys, cancel, report)?;
+    let container_path = container.relative.display().to_string();
     let derived = ctx.derived_data.display().to_string();
 
     report.step("Building");
@@ -70,6 +73,7 @@ pub(crate) fn run(
         sys,
         cancel,
         report,
+        None,
         "xcrun",
         &["simctl", "install", udid, &app_path],
         "Installing the app",
@@ -81,6 +85,7 @@ pub(crate) fn run(
         sys,
         cancel,
         report,
+        None,
         "xcrun",
         &["simctl", "launch", udid, &info.identifier],
         "Starting the app",
@@ -99,6 +104,7 @@ pub(crate) fn find_container(root: &Path, sys: &dyn System) -> Result<XcodeConta
             .map(|name| XcodeContainer {
                 flag,
                 path: dir.join(name),
+                relative: Path::new(IOS_DIR).join(name),
                 stem: name.trim_end_matches(extension).to_string(),
             })
     };
@@ -110,15 +116,17 @@ pub(crate) fn find_container(root: &Path, sys: &dyn System) -> Result<XcodeConta
 /// The scheme named like the project, else the first one.
 fn pick_scheme(
     container: &XcodeContainer,
+    root: &Path,
     sys: &dyn System,
     cancel: &CancelFlag,
     report: &mut dyn Report,
 ) -> Result<String, crate::Stop> {
-    let path = container.path.display().to_string();
+    let path = container.relative.display().to_string();
     let json = run_step(
         sys,
         cancel,
         report,
+        Some(root),
         "xcrun",
         &["xcodebuild", container.flag, &path, "-list", "-json"],
         "Listing Xcode schemes",
@@ -207,7 +215,7 @@ mod tests {
 
     const UDID: &str = "23F0A11F-0DD8-4766-853D-987DE9852BAC";
     const APP: &str = "/cache/Build/Products/Debug-iphonesimulator/iosApp.app";
-    const LIST: &str = "xcrun xcodebuild -project /proj/iosApp/iosApp.xcodeproj -list -json";
+    const LIST: &str = "xcrun xcodebuild -project iosApp/iosApp.xcodeproj -list -json";
     const SCHEMES: &str =
         r#"{"project":{"name":"iosApp","schemes":["Other","iosApp"],"targets":["iosApp"]}}"#;
 
@@ -263,13 +271,20 @@ mod tests {
             ScriptedStreamer::new(vec![ScriptedStreamer::ok(vec!["** BUILD SUCCEEDED **"])]);
         let mut report = Recorder::default();
         let device = simulator(UDID);
+        let sys = project();
 
         let outcome = build_and_run(
             &ctx(&device),
-            &project(),
+            &sys,
             &streamer,
             &mut report,
             &CancelFlag::default(),
+        );
+        let sys_ran_in = sys.ran_in();
+        assert_eq!(
+            sys_ran_in.first().map(|(dir, _)| dir.as_path()),
+            Some(Path::new("/proj")),
+            "the scheme list runs inside the project folder"
         );
 
         assert_eq!(outcome, BuildOutcome::Succeeded);
@@ -281,7 +296,7 @@ mod tests {
             [
                 "xcodebuild",
                 "-project",
-                "/proj/iosApp/iosApp.xcodeproj",
+                "iosApp/iosApp.xcodeproj",
                 "-scheme",
                 "iosApp",
                 "-configuration",
