@@ -28,6 +28,17 @@ pub enum ThemeKind {
     Light,
 }
 
+/// Colours of the code in the embedded Neovim.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EditorTheme {
+    /// Rainglow's Hyrule scheme.
+    #[default]
+    Hyrule,
+    /// Whatever Neovim and the user's own config give.
+    Neovim,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalKind {
@@ -132,6 +143,9 @@ pub struct Config {
     /// Show line numbers in the embedded Neovim (unless the user's own
     /// Neovim config already decided).
     pub line_numbers: bool,
+    /// Colours of the code in the editor (a colour scheme in the user's
+    /// own Neovim config still wins).
+    pub editor_theme: EditorTheme,
     pub terminal: TerminalKind,
     pub theme: ThemeKind,
     pub show_blame: bool,
@@ -153,6 +167,7 @@ impl Default for Config {
             editor: EditorMode::Embedded,
             lsp: true,
             line_numbers: true,
+            editor_theme: EditorTheme::Hyrule,
             terminal: TerminalKind::Auto,
             theme: ThemeKind::Dark,
             show_blame: false,
@@ -184,6 +199,7 @@ struct PartialConfig {
     editor: Option<EditorMode>,
     lsp: Option<bool>,
     line_numbers: Option<bool>,
+    editor_theme: Option<EditorTheme>,
     terminal: Option<TerminalKind>,
     theme: Option<ThemeKind>,
     show_blame: Option<bool>,
@@ -215,6 +231,7 @@ impl Config {
             editor: partial.editor.unwrap_or(self.editor),
             lsp: partial.lsp.unwrap_or(self.lsp),
             line_numbers: partial.line_numbers.unwrap_or(self.line_numbers),
+            editor_theme: partial.editor_theme.unwrap_or(self.editor_theme),
             terminal: partial.terminal.unwrap_or(self.terminal),
             theme: partial.theme.unwrap_or(self.theme),
             show_blame: partial.show_blame.unwrap_or(self.show_blame),
@@ -312,6 +329,25 @@ mod tests {
         );
         assert_eq!(merged.leader, DEFAULT_LEADER);
         assert_eq!(base, Config::default(), "original must not change");
+    }
+
+    #[test]
+    fn the_editor_uses_hyrule_unless_told_otherwise() {
+        let source = Path::new("x.toml");
+
+        assert_eq!(Config::default().editor_theme, EditorTheme::Hyrule);
+        assert_eq!(
+            Config::default()
+                .merged("editor_theme = \"neovim\"", source)
+                .unwrap()
+                .editor_theme,
+            EditorTheme::Neovim
+        );
+        assert!(
+            Config::default()
+                .merged("editor_theme = \"nord\"", source)
+                .is_err()
+        );
     }
 
     #[test]

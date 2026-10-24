@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crossterm::cursor::SetCursorStyle;
 use lf_mide_core::screen::CursorShape;
-use lf_mide_core::{Action, AppState};
+use lf_mide_core::{Action, AppState, EditorTheme};
 use lf_mide_editor::embedded::{Launch, Session, SessionEvent};
 use lf_mide_editor::lsp::LspServers;
 use lf_mide_system::System;
@@ -66,6 +66,7 @@ impl EmbeddedEditor {
             height,
             lsp: state.config.lsp.then(|| language_servers(sys)),
             line_numbers: state.config.line_numbers,
+            hyrule: state.config.editor_theme == EditorTheme::Hyrule,
         };
         match Session::start(launch, move |event| {
             for action in actions_for(event, &socket) {

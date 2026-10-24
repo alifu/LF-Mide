@@ -17,6 +17,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{mpsc, watch};
 
 use crate::EditorError;
+use crate::hyrule::HYRULE_LUA;
 use crate::lsp::{LspServers, SETUP_LUA};
 use crate::redraw::{Update, parse};
 
@@ -60,6 +61,8 @@ pub struct Launch {
     pub lsp: Option<LspServers>,
     /// Turn line numbers on, unless the user's Neovim config set `number`.
     pub line_numbers: bool,
+    /// Apply the Hyrule colour scheme, unless the user's config chose one.
+    pub hyrule: bool,
 }
 
 /// What the session reports, from its own tasks.
@@ -289,6 +292,11 @@ impl Writer {
             && let Err(error) = self.nvim.exec_lua(LINE_NUMBERS_LUA, vec![]).await
         {
             tracing::warn!(%error, "cannot turn on line numbers in Neovim");
+        }
+        if launch.hyrule
+            && let Err(error) = self.nvim.exec_lua(HYRULE_LUA, vec![]).await
+        {
+            tracing::warn!(%error, "cannot set the Hyrule colour scheme in Neovim");
         }
         let (servers, lsp_error) = self.set_up_lsp(launch.lsp.as_ref()).await;
         (self.report)(SessionEvent::Ready { servers, lsp_error });

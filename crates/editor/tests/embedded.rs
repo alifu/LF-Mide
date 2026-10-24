@@ -78,7 +78,7 @@ impl Running {
 }
 
 async fn start_with(width: u16, height: u16, lsp: Option<LspServers>) -> Running {
-    start_full(width, height, lsp, false, &[]).await
+    start_full(width, height, lsp, false, false, &[]).await
 }
 
 /// `args` follow `--clean`, e.g. `-c "set nonumber"` for a user's choice.
@@ -87,6 +87,7 @@ async fn start_full(
     height: u16,
     lsp: Option<LspServers>,
     line_numbers: bool,
+    hyrule: bool,
     args: &[&str],
 ) -> Running {
     let dir = tempfile::TempDir::new().unwrap();
@@ -100,6 +101,7 @@ async fn start_full(
         height,
         lsp,
         line_numbers,
+        hyrule,
     };
     let session = Session::start(launch, move |event| {
         let _ = tx.send(event);
@@ -314,6 +316,7 @@ async fn a_missing_program_is_an_error() {
         height: 5,
         lsp: None,
         line_numbers: false,
+        hyrule: false,
     };
 
     let result = Session::start(launch, |_| {}).await;
@@ -412,9 +415,9 @@ async fn line_numbers_are_on_unless_the_users_config_chose() {
     if !nvim_available() {
         return;
     }
-    let mut numbered = start_full(40, 10, None, true, &[]).await;
-    let mut chosen = start_full(40, 10, None, true, &["-c", "set nonumber"]).await;
-    let mut off = start_full(40, 10, None, false, &[]).await;
+    let mut numbered = start_full(40, 10, None, true, false, &[]).await;
+    let mut chosen = start_full(40, 10, None, true, false, &["-c", "set nonumber"]).await;
+    let mut off = start_full(40, 10, None, false, false, &[]).await;
     for nvim in [&mut numbered, &mut chosen, &mut off] {
         nvim.session.paste("alpha\r".into()).unwrap();
     }
@@ -436,4 +439,34 @@ async fn line_numbers_are_on_unless_the_users_config_chose() {
     );
     assert!(starts_with(&user_choice, 0, "alpha"), "nonumber is kept");
     assert!(starts_with(&disabled, 0, "alpha"), "line_numbers = false");
+}
+
+const HYRULE_BACKGROUND: u32 = 0x2d2c2b;
+
+#[tokio::test]
+async fn hyrule_colours_the_editor_unless_off_or_the_user_chose_a_scheme() {
+    if !nvim_available() {
+        return;
+    }
+    let background = |nvim: Running| nvim.latest.as_ref().and_then(|s| s.default_bg);
+    let mut hyrule = start_full(40, 10, None, false, true, &[]).await;
+    let mut off = start_full(40, 10, None, false, false, &[]).await;
+    let mut chosen = start_full(40, 10, None, false, true, &["-c", "colorscheme desert"]).await;
+    for nvim in [&mut hyrule, &mut off, &mut chosen] {
+        nvim.session.paste("x".into()).unwrap();
+        nvim.until_screen("a redraw", |s| s.row_text(0).starts_with('x'))
+            .await;
+    }
+
+    assert_eq!(background(hyrule), Some(HYRULE_BACKGROUND));
+    assert_ne!(
+        background(off),
+        Some(HYRULE_BACKGROUND),
+        "editor_theme = neovim"
+    );
+    assert_ne!(
+        background(chosen),
+        Some(HYRULE_BACKGROUND),
+        "the user's scheme wins"
+    );
 }

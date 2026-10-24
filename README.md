@@ -289,6 +289,10 @@ rest run IDE commands without leaving the editor. Leader then `l` from the file 
 change (bracketed paste). Neovim's grid follows the panel when the terminal is resized, and the cursor takes Neovim's
 shape (block, bar in insert mode, underline in replace mode).
 
+The code is coloured with the **Hyrule** scheme from [Rainglow](https://rainglow.io) (MIT, © Dayle Rees; the colours
+are taken from its [Vim port](https://github.com/rainglow/vim)). Set `editor_theme = "neovim"` to keep Neovim's own
+colours; a `colorscheme` chosen in your Neovim config always wins.
+
 Quitting (leader, then `q`) closes Neovim first, with Neovim's own question if something is unsaved ("Save changes? Yes, No,
 Cancel"); Cancel keeps both running; if Neovim cannot quit (a save failed), the status line says why
 and quitting asks again. While the question is open the leader stays with Neovim. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
@@ -358,6 +362,7 @@ Per project: `.lfmide.toml` in the project root, which overrides the global file
 ```toml
 leader = "C-Space"     # prefix for every IDE command and for moving between panels (Neovim notation: "C-Space", "C-\\", "F12")
 editor = "embedded"    # embedded (in the editor panel) | split (a pane next to LF-Mide)
+editor_theme = "hyrule" # colours of the code in the editor: hyrule | neovim (a colorscheme in your own Neovim config wins)
 line_numbers = true    # line numbers in the editor (your own Neovim config's `number` / `nonumber` wins)
 lsp = true             # set up kmp-lsp / sourcekit-lsp completion in the embedded Neovim
 terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux (for split mode)

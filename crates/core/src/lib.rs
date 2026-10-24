@@ -28,7 +28,7 @@ pub mod version;
 
 pub use action::Action;
 pub use config::{
-    Config, ConfigError, EditorMode, TerminalKind, ThemeKind, set_terminal_in_config,
+    Config, ConfigError, EditorMode, EditorTheme, TerminalKind, ThemeKind, set_terminal_in_config,
 };
 pub use devices::{
     AndroidSdk, Device, DeviceState, Platform, SdkInfo, ToolInfo, XcodeSdk, display_path,

@@ -1,6 +1,7 @@
 //! Talking to the Neovim we launched, over its `--listen` socket.
 
 pub mod embedded;
+pub mod hyrule;
 pub mod keys;
 pub mod lsp;
 pub mod redraw;
