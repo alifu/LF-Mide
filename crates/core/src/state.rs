@@ -44,6 +44,30 @@ impl Panel {
             .unwrap_or(0);
         Self::ORDER[(index + by) % Self::ORDER.len()]
     }
+
+    /// The panel next to this one in `direction`, or this one when the
+    /// screen has nothing there. Files, Editor and Devices sit side by side
+    /// above the Output panel, which spans the width.
+    pub fn toward(self, direction: Direction) -> Panel {
+        match (self, direction) {
+            (Panel::Files, Direction::Right) => Panel::Editor,
+            (Panel::Editor, Direction::Left) => Panel::Files,
+            (Panel::Editor, Direction::Right) => Panel::Devices,
+            (Panel::Devices, Direction::Left) => Panel::Editor,
+            (Panel::Files | Panel::Editor | Panel::Devices, Direction::Down) => Panel::Bottom,
+            (Panel::Bottom, Direction::Up) => Panel::Editor,
+            _ => self,
+        }
+    }
+}
+
+/// Which way a panel-to-panel move goes (`h j k l`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Down,
+    Up,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +175,12 @@ pub struct AppState {
     pub editor_ready: bool,
     /// Our own Neovim (in the editor panel) is running.
     pub embedded: bool,
+    /// The left button went down in that Neovim and is still held, so drags
+    /// keep reaching it even when the pointer leaves its grid.
+    pub editor_drag: bool,
+    /// The leader key was pressed; the next key is an IDE command (or a
+    /// move between panels) instead of reaching a panel or Neovim.
+    pub leader_pending: bool,
     /// What that Neovim shows, after its latest redraw.
     pub editor_screen: Option<Arc<Screen>>,
     /// Quitting waits for that Neovim to close (it may ask about unsaved
@@ -245,6 +275,8 @@ pub struct AppState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogStream {
     pub id: u64,
+    /// The device's id (not its name: simulators share names across
+    /// runtimes).
     pub device: String,
 }
 
@@ -316,6 +348,8 @@ impl AppState {
             editor_launching: false,
             editor_launch_wanted: false,
             embedded: false,
+            editor_drag: false,
+            leader_pending: false,
             editor_screen: None,
             quit_pending: false,
             files: Arc::new(Vec::new()),
@@ -406,6 +440,8 @@ mod tests {
         };
         let not_running = AppState {
             embedded: false,
+            editor_drag: false,
+            leader_pending: false,
             ..s.clone()
         };
         let doctor = AppState {

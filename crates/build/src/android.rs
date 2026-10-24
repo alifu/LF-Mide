@@ -80,6 +80,7 @@ pub(crate) fn run(
         ],
         "Starting the app",
     )?;
+    report.launched(&package);
     Ok(())
 }
 
@@ -309,6 +310,7 @@ android {
 
         assert_eq!(outcome, BuildOutcome::Succeeded);
         assert_eq!(report.steps, ["Building", "Launching"]);
+        assert_eq!(report.launched, ["com.example.lf_pos_mobile"]);
         let specs = streamer.specs.borrow();
         assert_eq!(specs[0].program, "./gradlew");
         assert_eq!(

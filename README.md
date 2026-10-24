@@ -93,19 +93,23 @@ cargo build --release
 ./target/release/lf-mide /path/to/your/cmp-project   # or run it inside the project
 ```
 
-Keys so far:
+Keys so far. **Every command key here is pressed after the leader** (`Ctrl-Space` by default, `leader = "..."` in the
+config), so no bare letter takes a key from Vim: `e` in this README means "leader, then `e`". The status bar shows a hint
+while the leader waits, and `Esc` lets it go. Inside a panel (the tree, Devices, Output) the panel's own keys need no
+leader.
 
-| Key | Action |
+| After the leader | Action |
 |---|---|
-| `Tab` / `Shift-Tab` | move focus between panels |
+| `h` `j` `k` `l` (or arrows) | move focus to the panel on the left, below, above or right (works from the editor too) |
+| `Tab` / `Shift-Tab` | next / previous panel |
 | `e` | start Neovim in the editor panel, or focus it (with `editor = "split"`: open it in a split pane) |
-| `f` | fuzzy-find a file and open it (`Ctrl-n`/`Ctrl-p` or arrows move, `Enter` opens, `Esc` cancels) |
+| `f` | the same finder as `Cmd-Shift-O` (below), for terminals that cannot send it: fuzzy-find a file and open it (`Ctrl-n`/`Ctrl-p` or arrows move, `Enter` opens, `Esc` cancels) |
 | `/` | search the project with ripgrep (`Enter` searches, then `Enter` opens the highlighted hit at its line) |
 | `t` | switch the build target between Android and iOS |
 | `d` | focus the Devices panel |
 | `i` | show the environment (SDK and Xcode locations and versions) |
 | `B` | build the app and run it on the chosen running device |
-| `s` | cancel the build |
+| `s` | stop: cancels the build while it runs, afterwards stops the app it launched on the device (the log keeps following; `L` ends it) |
 | `L` | follow (or stop following) the chosen device's log |
 | `o` | focus the Output panel |
 | `p` | open the Perf panel (memory and the dev processes using it) |
@@ -116,7 +120,18 @@ Keys so far:
 | `T` | pick the terminal |
 | `D` | doctor panel |
 | `R` | rescan the project files |
-| `q` / `Ctrl-C` | quit (inside `f` and `/` every key is text, so `q` is just a letter; in the editor every key is Neovim's) |
+| `?` | help (panel keys and a Vim cheat sheet) |
+| `q` | quit (in the editor Neovim asks first about unsaved changes) |
+
+**Find a file with `Cmd-Shift-O`**, from any panel and from inside the editor, no leader needed. A terminal app never
+receives the Command key by itself, so tell the terminal to send it. In iTerm2: *Settings → Profiles → Keys → Key
+Mappings → +*, shortcut `Cmd-Shift-O`, action **Send Escape Sequence**, value `[111;10u` (that is `Esc [ 1 1 1 ; 1 0 u`,
+the standard "Super+Shift+o" key code). If iTerm2 still opens its own "Open Quickly", remove or change that shortcut
+under *Settings → Keys → Key Bindings*. Kitty, WezTerm and Ghostty can map the key to the same sequence.
+
+`Ctrl-C` also quits from the panels; inside the finder and the search every key is text; in the editor every key is
+Neovim's except the leader. `Tab` / `Shift-Tab` work without the leader in the panels, but not in the editor, where
+Neovim keeps `Tab`.
 
 In the file tree (focused by default): `j`/`k` or arrows move, `l`/`Right` expands, `h`/`Left` collapses or steps out,
 `Enter` opens a file or toggles a directory, `g`/`G` jump to top/bottom, `PageUp`/`PageDown` page.
@@ -268,14 +283,15 @@ project, so opening or closing a folder takes microseconds even with 200,000 fil
 
 `e`, or choosing a file in the tree, the finder or a search, starts Neovim (`nvim --embed`) in the editor panel, in your
 project folder, with your own Neovim config. While the editor has focus **every key goes to Neovim**, `Ctrl-C`, `q`
-and `Tab` included, except the leader (`C-Space` by default, `leader = "..."` in the config), which hands focus back to
-the panels: then `f`, `/`, `B` and the rest work as usual, and `Tab` or `e` returns to the editor. Pastes arrive as one
+and `Tab` included, except the leader (`C-Space` by default, `leader = "..."` in the config). The leader is the only
+way out: leader then `h`, `j`, `k` or `l` moves focus to the neighbouring panel, and leader then `f`, `/`, `B` and the
+rest run IDE commands without leaving the editor. Leader then `l` from the file tree (or `e`) returns to the editor. Pastes arrive as one
 change (bracketed paste). Neovim's grid follows the panel when the terminal is resized, and the cursor takes Neovim's
 shape (block, bar in insert mode, underline in replace mode).
 
-Quitting with `q` closes Neovim first, with Neovim's own question if something is unsaved ("Save changes? Yes, No,
+Quitting (leader, then `q`) closes Neovim first, with Neovim's own question if something is unsaved ("Save changes? Yes, No,
 Cancel"); Cancel keeps both running; if Neovim cannot quit (a save failed), the status line says why
-and `q` asks again. While the question is open the leader stays with Neovim. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
+and quitting asks again. While the question is open the leader stays with Neovim. `:q` in Neovim closes only Neovim; `e` starts a new one. If the terminal itself
 goes away (window closed, `SIGHUP`/`SIGTERM`), there is nobody left to answer, so Neovim is stopped at once and its swap
 file keeps the unsaved changes for recovery next time.
 
@@ -340,8 +356,9 @@ Global: `~/.config/lf-mide/config.toml` (or `$XDG_CONFIG_HOME/lf-mide/config.tom
 Per project: `.lfmide.toml` in the project root, which overrides the global file.
 
 ```toml
-leader = "C-Space"     # leaves the editor for the panels (Neovim notation: "C-Space", "C-\\", "F12")
+leader = "C-Space"     # prefix for every IDE command and for moving between panels (Neovim notation: "C-Space", "C-\\", "F12")
 editor = "embedded"    # embedded (in the editor panel) | split (a pane next to LF-Mide)
+line_numbers = true    # line numbers in the editor (your own Neovim config's `number` / `nonumber` wins)
 lsp = true             # set up kmp-lsp / sourcekit-lsp completion in the embedded Neovim
 terminal = "iterm2"    # auto | iterm2 | ghostty | wezterm | kitty | terminal | tmux (for split mode)
 theme = "dark"         # dark | light (the colours for a light terminal background)
@@ -376,8 +393,6 @@ crates/
 ├── terminal/         # terminal detection and split-pane launching
 ├── ui/               # ratatui rendering (pure view of the state)
 └── vcs/              # git: branch, changed files, diff, blame
-spikes/
-└── nvim-embed/       # Phase 0: Neovim embedding proof (standalone crate)
 ```
 
 More crates are added as the roadmap progresses.

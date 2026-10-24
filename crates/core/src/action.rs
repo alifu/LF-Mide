@@ -15,7 +15,7 @@ use crate::perf::PerfSample;
 use crate::prefs::ProjectPrefs;
 use crate::screen::Screen;
 use crate::state::BranchInfo;
-use crate::state::Panel;
+use crate::state::{Direction, Panel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -120,6 +120,12 @@ pub enum Action {
     },
     /// Give this panel the focus.
     Focus(Panel),
+    /// Give the focus to the neighbouring panel in this direction.
+    FocusDirection(Direction),
+    /// The leader key was pressed: the next key is an IDE command.
+    LeaderPressed,
+    /// The leader's next key was taken (or it was cancelled).
+    LeaderDone,
     /// Switch the build target between Android and iOS.
     ToggleTarget,
     /// What is installed for each platform.
@@ -133,6 +139,8 @@ pub enum Action {
     RefreshDevices,
     /// Move the device highlight within the current target (negative = up).
     DeviceMove(i16),
+    /// Choose the device at this row of the current target's list (a click).
+    DeviceSelect(usize),
     /// Start the chosen device.
     BootDevice,
     /// Stop the chosen device.
@@ -155,6 +163,11 @@ pub enum Action {
     RunApp,
     /// Stop the build in progress.
     CancelBuild,
+    /// The run started the app under this id on the device of build `id`.
+    AppLaunched {
+        id: u64,
+        app_id: String,
+    },
     /// What build `id` is doing now ("Installing", ...).
     BuildStep {
         id: u64,

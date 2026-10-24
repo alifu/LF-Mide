@@ -11,6 +11,7 @@ use crate::doctor::{Report, popup_content_rows};
 use crate::editor_reducer;
 use crate::git_reducer;
 use crate::layout::{devices_viewport_rows, files_viewport_rows};
+use crate::mouse::{MouseAction, MouseButton};
 use crate::nav::{TreeIndex, parent_row};
 use crate::output_reducer;
 use crate::perf_reducer;
@@ -18,6 +19,9 @@ use crate::state::{
     AppState, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState, MAX_QUERY_CHARS,
     MAX_TRANSITION_POLLS, Panel, Transition,
 };
+
+/// Shown in the status bar while the leader waits for its next key.
+const LEADER_HINT: &str = "Leader: h j k l move focus · ? help · Esc cancel";
 
 /// Consumes `state` and returns the state that results from applying
 /// `action`. Taking ownership keeps updates pure without copying the whole
@@ -31,8 +35,12 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         },
         Action::EmbeddedStarted => editor_reducer::started(state),
         Action::EditorScreen(screen) => editor_reducer::screen(state, screen),
-        // Sent to Neovim by the app; nothing here changes.
-        Action::EditorKeys(_) | Action::EditorPaste(_) | Action::EditorMouse(_) => state,
+        // Sent to Neovim by the app; only the drag state changes here.
+        Action::EditorKeys(_) | Action::EditorPaste(_) => state,
+        Action::EditorMouse(mouse) => AppState {
+            editor_drag: editor_drag_after(state.editor_drag, mouse.action),
+            ..state
+        },
         Action::EditorExited => editor_reducer::exited(state),
         Action::EditorQuitCancelled(reason) => editor_reducer::quit_cancelled(state, reason),
         Action::FocusNext => AppState {
@@ -200,7 +208,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             editor_socket: None,
             marks_key: None,
             editor_ready: false,
-            status: Some("Neovim isn't running: press e to open it".to_string()),
+            status: Some("Neovim isn't running: press leader+e to open it".to_string()),
             ..state
         },
         Action::FilesLoaded(files) => rebuild_tree(AppState {
@@ -250,6 +258,20 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             focus: panel,
             ..state
         },
+        Action::FocusDirection(direction) => AppState {
+            focus: state.focus.toward(direction),
+            ..state
+        },
+        Action::LeaderPressed => AppState {
+            leader_pending: true,
+            status: Some(LEADER_HINT.to_string()),
+            ..state
+        },
+        Action::LeaderDone => AppState {
+            leader_pending: false,
+            status: state.status.filter(|text| text != LEADER_HINT),
+            ..state
+        },
         Action::ToggleTarget => show_selected_device(AppState {
             target: state.target.other(),
             device_top: 0,
@@ -297,6 +319,17 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
                 ..state
             })
         }
+        Action::DeviceSelect(index) => {
+            let Some(id) = state.target_devices().get(index).map(|d| d.id.clone()) else {
+                return state;
+            };
+            let mut selected_devices = state.selected_devices.clone();
+            selected_devices.insert(state.target, id);
+            show_selected_device(AppState {
+                selected_devices,
+                ..state
+            })
+        }
         Action::BootDevice => start_or_stop(state, DeviceAction::Boot),
         Action::StopDevice => start_or_stop(state, DeviceAction::Stop),
         Action::DeviceActionFailed {
@@ -333,6 +366,7 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
         },
         Action::RunApp => output_reducer::run_app(state),
         Action::CancelBuild => output_reducer::cancel_build(state),
+        Action::AppLaunched { id, app_id } => output_reducer::app_launched(state, id, app_id),
         Action::BuildStep { id, step } => output_reducer::build_step(state, id, step),
         Action::BuildOutput { id, lines } => output_reducer::build_output(state, id, lines),
         Action::BuildFinished {
@@ -671,6 +705,15 @@ fn default_device<'a>(platform: Platform, listed: &[&'a Device]) -> Option<&'a D
         })
         .or_else(|| listed.first())
         .copied()
+}
+
+/// Whether a left-button drag is in progress after `action`.
+fn editor_drag_after(dragging: bool, action: MouseAction) -> bool {
+    match action {
+        MouseAction::Press(MouseButton::Left) => true,
+        MouseAction::Release(MouseButton::Left) => false,
+        _ => dragging,
+    }
 }
 
 /// Scrolls the device list just enough to show the chosen device.
@@ -1388,7 +1431,7 @@ mod tests {
         let lost = reduce(s, Action::EditorLost);
 
         assert_eq!(lost.editor_socket, None);
-        assert!(lost.status.unwrap().contains("press e"));
+        assert!(lost.status.unwrap().contains("press leader+e"));
     }
 
     // --- finder ---
@@ -2118,6 +2161,89 @@ mod tests {
             prefs.ios_device.as_deref(),
             Some("22222222-2222-2222-2222-222222222222")
         );
+    }
+
+    #[test]
+    fn clicking_a_device_row_chooses_it_for_the_current_target() {
+        let s = with_devices(sample_devices());
+
+        let clicked = reduce(s.clone(), Action::DeviceSelect(1));
+        let past_end = reduce(s.clone(), Action::DeviceSelect(50));
+
+        assert_eq!(selected_id(&clicked, Platform::Android), Some("Tablet"));
+        assert_eq!(
+            selected_id(&past_end, Platform::Android),
+            selected_id(&s, Platform::Android),
+            "a row past the list changes nothing"
+        );
+    }
+
+    #[test]
+    fn panels_are_reached_by_direction_and_the_edges_stay_put() {
+        use crate::state::Direction::{Down, Left, Right, Up};
+
+        assert_eq!(Panel::Files.toward(Right), Panel::Editor);
+        assert_eq!(Panel::Editor.toward(Right), Panel::Devices);
+        assert_eq!(Panel::Editor.toward(Left), Panel::Files);
+        assert_eq!(Panel::Devices.toward(Left), Panel::Editor);
+        assert_eq!(Panel::Files.toward(Down), Panel::Bottom);
+        assert_eq!(Panel::Devices.toward(Down), Panel::Bottom);
+        assert_eq!(Panel::Bottom.toward(Up), Panel::Editor);
+        assert_eq!(Panel::Files.toward(Left), Panel::Files);
+        assert_eq!(Panel::Bottom.toward(Down), Panel::Bottom);
+        assert_eq!(Panel::Editor.toward(Up), Panel::Editor);
+    }
+
+    #[test]
+    fn the_leader_waits_for_a_key_and_then_lets_go() {
+        let waiting = reduce(state(), Action::LeaderPressed);
+        let moved = reduce(
+            reduce(waiting.clone(), Action::LeaderDone),
+            Action::FocusDirection(crate::state::Direction::Right),
+        );
+
+        assert!(waiting.leader_pending);
+        assert!(
+            waiting.status.is_some(),
+            "the status bar says what to press"
+        );
+        assert!(!moved.leader_pending);
+        assert_eq!(moved.status, None, "the hint goes away with the leader");
+        assert_eq!(
+            moved.focus,
+            state().focus.toward(crate::state::Direction::Right)
+        );
+    }
+
+    #[test]
+    fn letting_go_of_the_leader_keeps_an_unrelated_status() {
+        let mut busy = state();
+        busy.status = Some("Starting Pixel_8…".to_string());
+
+        let after = reduce(busy, Action::LeaderDone);
+
+        assert_eq!(after.status.as_deref(), Some("Starting Pixel_8…"));
+    }
+
+    #[test]
+    fn a_left_drag_in_the_editor_lasts_from_press_to_release() {
+        let at = |action| {
+            Action::EditorMouse(crate::mouse::EditorMouse {
+                action,
+                row: 0,
+                col: 0,
+            })
+        };
+        let left = MouseButton::Left;
+
+        let pressed = reduce(state(), at(MouseAction::Press(left)));
+        let dragged = reduce(pressed.clone(), at(MouseAction::Drag(left)));
+        let released = reduce(dragged.clone(), at(MouseAction::Release(left)));
+        let right_pressed = reduce(state(), at(MouseAction::Press(MouseButton::Right)));
+
+        assert!(pressed.editor_drag && dragged.editor_drag);
+        assert!(!released.editor_drag);
+        assert!(!right_pressed.editor_drag, "only the left button drags");
     }
 
     #[test]

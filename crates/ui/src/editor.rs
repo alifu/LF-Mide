@@ -51,8 +51,8 @@ fn placeholder(state: &AppState) -> &'static str {
         return "Neovim runs in another pane";
     }
     match state.config.editor {
-        EditorMode::Split => "Neovim runs in a split pane: press e to open it",
-        EditorMode::Embedded => "Press e, or choose a file, to start Neovim here",
+        EditorMode::Split => "Neovim runs in a split pane: press leader+e to open it",
+        EditorMode::Embedded => "Press leader+e, or choose a file, to start Neovim here",
     }
 }
 
@@ -277,7 +277,7 @@ mod tests {
             ..state()
         };
 
-        assert!(screen(&state()).contains("Press e, or choose a file"));
+        assert!(screen(&state()).contains("Press leader+e, or choose a file"));
         assert!(screen(&starting).contains("Starting Neovim"));
         assert!(screen(&split).contains("split pane"));
     }

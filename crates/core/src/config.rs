@@ -129,6 +129,9 @@ pub struct Config {
     pub editor: EditorMode,
     /// Set up language servers (completion) in the embedded Neovim.
     pub lsp: bool,
+    /// Show line numbers in the embedded Neovim (unless the user's own
+    /// Neovim config already decided).
+    pub line_numbers: bool,
     pub terminal: TerminalKind,
     pub theme: ThemeKind,
     pub show_blame: bool,
@@ -149,6 +152,7 @@ impl Default for Config {
             leader: DEFAULT_LEADER.to_string(),
             editor: EditorMode::Embedded,
             lsp: true,
+            line_numbers: true,
             terminal: TerminalKind::Auto,
             theme: ThemeKind::Dark,
             show_blame: false,
@@ -179,6 +183,7 @@ struct PartialConfig {
     leader: Option<String>,
     editor: Option<EditorMode>,
     lsp: Option<bool>,
+    line_numbers: Option<bool>,
     terminal: Option<TerminalKind>,
     theme: Option<ThemeKind>,
     show_blame: Option<bool>,
@@ -209,6 +214,7 @@ impl Config {
             leader: partial.leader.unwrap_or_else(|| self.leader.clone()),
             editor: partial.editor.unwrap_or(self.editor),
             lsp: partial.lsp.unwrap_or(self.lsp),
+            line_numbers: partial.line_numbers.unwrap_or(self.line_numbers),
             terminal: partial.terminal.unwrap_or(self.terminal),
             theme: partial.theme.unwrap_or(self.theme),
             show_blame: partial.show_blame.unwrap_or(self.show_blame),
@@ -297,6 +303,13 @@ mod tests {
 
         assert_eq!(merged.terminal, TerminalKind::Iterm2);
         assert!(merged.show_blame);
+        assert!(merged.line_numbers, "on unless switched off");
+        assert!(
+            !Config::default()
+                .merged("line_numbers = false\n", Path::new("x.toml"))
+                .unwrap()
+                .line_numbers
+        );
         assert_eq!(merged.leader, DEFAULT_LEADER);
         assert_eq!(base, Config::default(), "original must not change");
     }

@@ -81,7 +81,7 @@ fn swap_alert(sample: &PerfSample) -> String {
             p.kind.label(),
             format_size(p.rss)
         ),
-        None => format!("Swap is {swap}: press p to see what uses the memory"),
+        None => format!("Swap is {swap}: press leader+p to see what uses the memory"),
     }
 }
 

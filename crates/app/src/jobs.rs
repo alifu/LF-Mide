@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use lf_mide_build::{
-    CancelFlag, Context, ProcessStreamer, Report, Streamer, build_and_run, log_spec,
+    CancelFlag, Context, ProcessStreamer, Report, Streamer, build_and_run, log_spec, stop_app,
 };
 use lf_mide_core::{
     Action, AppState, BuildRequest, Job, LogRequest, Platform, ProjectLayout, prefs_file_name,
@@ -137,6 +137,18 @@ impl JobRunner {
                 }
             }
             Job::StartLogs(request) => self.start_logs(request, env),
+            Job::StopApp(request) => {
+                let tx = env.tx.clone();
+                std::thread::spawn(move || {
+                    let sys = SystemRunner::with_timeout(TOOL_TIMEOUT);
+                    let name = request.device.name.clone();
+                    let message = match stop_app(&request.device, &request.app_id, &sys) {
+                        Ok(()) => format!("Stopped the app on {name}"),
+                        Err(reason) => format!("Could not stop the app on {name}: {reason}"),
+                    };
+                    let _ = tx.send(Action::Status(message));
+                });
+            }
             Job::LoadDiff { id, path, base } => {
                 crate::git_effects::spawn_load_diff(
                     env.root.clone(),
@@ -230,6 +242,13 @@ impl Report for ChannelReport {
     fn lines(&mut self, lines: Vec<String>) {
         self.backlog
             .send(&self.tx, Action::BuildOutput { id: self.id, lines });
+    }
+
+    fn launched(&mut self, app_id: &str) {
+        let _ = self.tx.send(Action::AppLaunched {
+            id: self.id,
+            app_id: app_id.to_string(),
+        });
     }
 }
 

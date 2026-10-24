@@ -32,6 +32,14 @@ const QUIT_SETTLE: Duration = Duration::from_secs(1);
 /// `{ true }` when the user cancels and `{ false, message }` when Neovim
 /// refuses (a write failed, a job still runs); when Neovim quits, the call
 /// never returns.
+/// Line numbers on, but only where the user's own config has not chosen:
+/// an `init.lua` with `nonumber` keeps winning.
+const LINE_NUMBERS_LUA: &str = r#"
+if not vim.api.nvim_get_option_info2('number', {}).was_set then
+  vim.o.number = true
+end
+"#;
+
 const CONFIRM_QUIT_LUA: &str = r#"
 local ok, err = pcall(vim.cmd, 'confirm qa')
 return { ok, ok and '' or tostring(err) }
@@ -50,6 +58,8 @@ pub struct Launch {
     pub height: u16,
     /// Language servers to set up, if any.
     pub lsp: Option<LspServers>,
+    /// Turn line numbers on, unless the user's Neovim config set `number`.
+    pub line_numbers: bool,
 }
 
 /// What the session reports, from its own tasks.
@@ -274,6 +284,11 @@ impl Writer {
         // only costs the mouse, so it is logged.
         if let Err(error) = self.nvim.command("set mouse=a").await {
             tracing::warn!(%error, "cannot turn on the mouse in Neovim");
+        }
+        if launch.line_numbers
+            && let Err(error) = self.nvim.exec_lua(LINE_NUMBERS_LUA, vec![]).await
+        {
+            tracing::warn!(%error, "cannot turn on line numbers in Neovim");
         }
         let (servers, lsp_error) = self.set_up_lsp(launch.lsp.as_ref()).await;
         (self.report)(SessionEvent::Ready { servers, lsp_error });

@@ -241,6 +241,11 @@ pub struct BuildState {
     pub task: Option<String>,
     /// Name of the device it runs for.
     pub device: Option<String>,
+    /// Its id: names repeat (one simulator per iOS runtime), ids do not.
+    pub device_id: Option<String>,
+    /// What the last run started on that device (package name or bundle
+    /// id), once it is running; `leader+s` stops it.
+    pub app_id: Option<String>,
     pub millis: Option<u64>,
     pub errors: usize,
     pub warnings: usize,
@@ -269,6 +274,13 @@ pub struct LogRequest {
     pub device: Device,
 }
 
+/// Stop this app on this device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopAppRequest {
+    pub device: Device,
+    pub app_id: String,
+}
+
 /// Work for the app to start; queued by the reducer like device commands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Job {
@@ -278,6 +290,7 @@ pub enum Job {
     },
     StartLogs(LogRequest),
     StopLogs(Platform),
+    StopApp(StopAppRequest),
     /// Compute the diff of `path` against `base`.
     LoadDiff {
         id: u64,

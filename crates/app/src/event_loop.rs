@@ -82,9 +82,7 @@ pub async fn run(mut terminal: DefaultTerminal, initial: AppState) -> Result<()>
             () = quit_signals.arrived() => Input::Signal,
         };
         let actions = match input {
-            Input::Terminal(Some(Ok(Event::Key(key)))) => {
-                keymap::action_for(&state, key).into_iter().collect()
-            }
+            Input::Terminal(Some(Ok(Event::Key(key)))) => keymap::key_actions(&state, key),
             Input::Terminal(Some(Ok(Event::Resize(_, rows)))) => {
                 vec![Action::ViewportChanged(rows)]
             }

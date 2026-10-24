@@ -63,7 +63,7 @@ pub fn exited(state: AppState) -> AppState {
         quit_pending: false,
         should_quit: state.should_quit || quitting,
         focus,
-        status: Some("Neovim closed: press e to open it again".to_string()),
+        status: Some("Neovim closed: press leader+e to open it again".to_string()),
         ..state
     }
 }

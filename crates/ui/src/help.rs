@@ -21,18 +21,28 @@ fn lines() -> Vec<Line<'static>> {
     let note =
         |text: &str| Line::styled(format!("  {text}"), Style::new().fg(theme::current().muted));
     vec![
-        heading("Panels"),
+        heading("In a panel (the editor keeps every key, Tab included)"),
+        key("Cmd-Shift-O", "find a file, from anywhere (the editor too)"),
         key("Tab / S-Tab", "move focus between panels"),
         key("j k h l", "move, collapse or expand in the file tree"),
         key("Enter", "open the file, or open or close a folder"),
+        key("b x r", "in Devices: boot, stop, refresh"),
+        key("1-5  F  c", "in the output: tab, filter, clear"),
+        Line::raw(""),
+        heading("After the leader (C-Space by default; also inside the editor)"),
+        key(
+            "h j k l",
+            "move focus to the panel left, below, above, right",
+        ),
+        key("Tab / S-Tab", "next or previous panel"),
         key("f  /", "find a file  ·  search the project"),
         key("e", "open the editor (Neovim) in its panel"),
-        key("C-Space", "leave the editor for the panels"),
-        key("B  s", "run the app  ·  cancel the build"),
+        key(
+            "B  s",
+            "run the app  ·  stop: cancel the build, or stop the app",
+        ),
         key("t  d", "switch Android/iOS  ·  focus the devices"),
-        key("b x r", "in Devices: boot, stop, refresh"),
         key("o  L", "focus the output  ·  show or hide the logs"),
-        key("1-5  F  c", "in the output: tab, filter, clear"),
         key("C  =  A", "git tab  ·  diff of this file  ·  blame"),
         key(
             "p P D i",
@@ -40,10 +50,14 @@ fn lines() -> Vec<Line<'static>> {
         ),
         key("T  R", "choose the terminal  ·  reload the file tree"),
         key(
+            "?  q",
+            "this help  ·  quit (Neovim asks about unsaved changes)",
+        ),
+        key("Esc", "let go of the leader"),
+        key(
             "mouse",
             "click to focus or pick, wheel to scroll (Option-drag selects text)",
         ),
-        key("q", "quit (Neovim asks first about unsaved changes)"),
         Line::raw(""),
         heading("Vim basics (inside the editor every key goes to Neovim)"),
         key(

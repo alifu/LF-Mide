@@ -2,13 +2,34 @@
 //! on screen, so the current state is an input.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use lf_mide_core::{Action, AppState, DoctorPanel, OutputTab, Panel};
+use lf_mide_core::{Action, AppState, Direction, DoctorPanel, OutputTab, Panel};
 
 const PAGE_LINES: i16 = 10;
+
+/// What a key does, as the actions to run in order. After the leader the
+/// leader is released first, whatever the next key was.
+pub fn key_actions(state: &AppState, key: KeyEvent) -> Vec<Action> {
+    let Some(action) = action_for(state, key) else {
+        return Vec::new();
+    };
+    if state.leader_pending && action != Action::LeaderDone {
+        vec![Action::LeaderDone, action]
+    } else {
+        vec![action]
+    }
+}
 
 pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if key.kind != KeyEventKind::Press {
         return None;
+    }
+    // The key after the leader is an IDE command, never Neovim's.
+    if state.leader_pending {
+        return Some(leader_command(key));
+    }
+    // Find a file from anywhere, the editor included; Neovim never sees it.
+    if is_find_file_key(key) && !state.overlay_open() && !state.quit_pending {
+        return Some(Action::OpenFinder);
     }
     // Our Neovim gets every key, Ctrl-C and q included, except the leader.
     if state.editor_has_keys() {
@@ -47,19 +68,74 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
         return perf_key(key.code);
     }
     match state.doctor {
-        DoctorPanel::Closed => main_key(state, key.code, ctrl),
+        DoctorPanel::Closed if is_leader(state, key) => Some(Action::LeaderPressed),
+        DoctorPanel::Closed => main_key(state, key.code),
         DoctorPanel::Running | DoctorPanel::Ready(_) => doctor_key(key.code),
     }
 }
 
-/// A key for the embedded Neovim; the leader hands focus back to the panels.
+/// Command-Shift-O, as a terminal reports it once it is set to send that
+/// chord (a terminal app never sees the Command key on its own).
+fn is_find_file_key(key: KeyEvent) -> bool {
+    key.modifiers == (KeyModifiers::SUPER | KeyModifiers::SHIFT)
+        && matches!(key.code, KeyCode::Char('o' | 'O'))
+}
+
+/// Whether `key` is the configured leader.
+fn is_leader(state: &AppState, key: KeyEvent) -> bool {
+    lf_mide_editor::keys::notation(key).is_some_and(|keys| {
+        lf_mide_editor::keys::leader(&state.config.leader).as_ref() == Some(&keys)
+    })
+}
+
+/// A key for the embedded Neovim; only the leader is kept back for the IDE.
 fn editor_key(state: &AppState, key: KeyEvent) -> Option<Action> {
     let keys = lf_mide_editor::keys::notation(key)?;
-    if lf_mide_editor::keys::leader(&state.config.leader).as_ref() == Some(&keys) {
+    if is_leader(state, key) {
         // While Neovim asks about quitting, its question keeps the keys.
-        return (!state.quit_pending).then_some(Action::Focus(Panel::Files));
+        return (!state.quit_pending).then_some(Action::LeaderPressed);
     }
     Some(Action::EditorKeys(keys))
+}
+
+/// The IDE command after the leader. None of these letters reaches Neovim
+/// or a panel, so they may repeat Vim's own keys (`s`, `d`, `o`, `p`...).
+/// Anything unknown just releases the leader.
+fn leader_command(key: KeyEvent) -> Action {
+    // Only plain keys (Shift allowed) are commands; a chord just lets go.
+    let chord = KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER;
+    if key.modifiers.intersects(chord) {
+        return Action::LeaderDone;
+    }
+    match key.code {
+        KeyCode::Char('h') | KeyCode::Left => Action::FocusDirection(Direction::Left),
+        KeyCode::Char('j') | KeyCode::Down => Action::FocusDirection(Direction::Down),
+        KeyCode::Char('k') | KeyCode::Up => Action::FocusDirection(Direction::Up),
+        KeyCode::Char('l') | KeyCode::Right => Action::FocusDirection(Direction::Right),
+        KeyCode::Tab => Action::FocusNext,
+        KeyCode::BackTab => Action::FocusPrev,
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('B') => Action::RunApp,
+        KeyCode::Char('s') => Action::CancelBuild,
+        KeyCode::Char('L') => Action::ToggleLogs,
+        KeyCode::Char('o') => Action::Focus(Panel::Bottom),
+        KeyCode::Char('t') => Action::ToggleTarget,
+        KeyCode::Char('d') => Action::Focus(Panel::Devices),
+        KeyCode::Char('i') => Action::ToggleInfo,
+        KeyCode::Char('?') => Action::ToggleHelp,
+        KeyCode::Char('C') => Action::ShowGit,
+        KeyCode::Char('=') => Action::OpenDiffCurrent,
+        KeyCode::Char('A') => Action::ToggleBlame,
+        KeyCode::Char('p') => Action::TogglePerfPanel,
+        KeyCode::Char('P') => Action::TogglePerfIndicator,
+        KeyCode::Char('D') => Action::ToggleDoctor,
+        KeyCode::Char('T') => Action::OpenTerminalPicker,
+        KeyCode::Char('e') => Action::OpenEditor,
+        KeyCode::Char('f') => Action::OpenFinder,
+        KeyCode::Char('/') => Action::OpenGrep,
+        KeyCode::Char('R') => Action::RefreshFiles,
+        _ => Action::LeaderDone,
+    }
 }
 
 /// A paste outside the editor: typed into the finder, the search or the log
@@ -87,7 +163,9 @@ fn picker_key(code: KeyCode) -> Option<Action> {
     }
 }
 
-fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
+/// Keys of the focused panel. IDE-wide commands are not here: they come
+/// after the leader, so no bare letter repeats one of Vim's.
+fn main_key(state: &AppState, code: KeyCode) -> Option<Action> {
     if state.focus == Panel::Files
         && let Some(action) = tree_key(state, code)
     {
@@ -104,26 +182,6 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
         return Some(action);
     }
     match code {
-        KeyCode::Char('q') if !ctrl => Some(Action::Quit),
-        KeyCode::Char('B') => Some(Action::RunApp),
-        KeyCode::Char('s') => Some(Action::CancelBuild),
-        KeyCode::Char('L') => Some(Action::ToggleLogs),
-        KeyCode::Char('o') => Some(Action::Focus(Panel::Bottom)),
-        KeyCode::Char('t') => Some(Action::ToggleTarget),
-        KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
-        KeyCode::Char('i') => Some(Action::ToggleInfo),
-        KeyCode::Char('?') => Some(Action::ToggleHelp),
-        KeyCode::Char('C') => Some(Action::ShowGit),
-        KeyCode::Char('=') => Some(Action::OpenDiffCurrent),
-        KeyCode::Char('A') => Some(Action::ToggleBlame),
-        KeyCode::Char('p') => Some(Action::TogglePerfPanel),
-        KeyCode::Char('P') => Some(Action::TogglePerfIndicator),
-        KeyCode::Char('D') => Some(Action::ToggleDoctor),
-        KeyCode::Char('T') => Some(Action::OpenTerminalPicker),
-        KeyCode::Char('e') => Some(Action::OpenEditor),
-        KeyCode::Char('f') => Some(Action::OpenFinder),
-        KeyCode::Char('/') => Some(Action::OpenGrep),
-        KeyCode::Char('R') => Some(Action::RefreshFiles),
         KeyCode::Tab => Some(Action::FocusNext),
         KeyCode::BackTab => Some(Action::FocusPrev),
         _ => None,
@@ -404,6 +462,19 @@ mod tests {
         action_for(state, key(code))
     }
 
+    /// The state with the leader pressed, waiting for its command.
+    fn pending(state: &AppState) -> AppState {
+        AppState {
+            leader_pending: true,
+            ..state.clone()
+        }
+    }
+
+    /// What `code` does as the key right after the leader.
+    fn after_leader(state: &AppState, code: KeyCode) -> Option<Action> {
+        action(&pending(state), code)
+    }
+
     fn editing() -> AppState {
         let s = [
             Action::OpenEditor,
@@ -439,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn the_leader_leaves_the_editor() {
+    fn the_leader_waits_for_a_command_instead_of_reaching_neovim() {
         let s = editing();
         let custom = AppState {
             config: Config {
@@ -451,11 +522,11 @@ mod tests {
 
         assert_eq!(
             action_for(&s, press(KeyCode::Char(' '), KeyModifiers::CONTROL)),
-            Some(Action::Focus(Panel::Files))
+            Some(Action::LeaderPressed)
         );
         assert_eq!(
             action_for(&custom, press(KeyCode::Char('4'), KeyModifiers::CONTROL)),
-            Some(Action::Focus(Panel::Files))
+            Some(Action::LeaderPressed)
         );
     }
 
@@ -474,6 +545,124 @@ mod tests {
             action(&asking, KeyCode::Char('c')),
             Some(Action::EditorKeys("c".into()))
         );
+    }
+
+    #[test]
+    fn command_shift_o_opens_the_finder_even_inside_the_editor() {
+        let chord = |ch| press(KeyCode::Char(ch), KeyModifiers::SUPER | KeyModifiers::SHIFT);
+
+        for s in [editing(), closed(), pending(&closed())] {
+            let expected = if s.leader_pending {
+                Action::LeaderDone
+            } else {
+                Action::OpenFinder
+            };
+            assert_eq!(action_for(&s, chord('O')), Some(expected.clone()));
+            assert_eq!(action_for(&s, chord('o')), Some(expected));
+        }
+    }
+
+    #[test]
+    fn command_shift_o_leaves_neovim_alone_while_it_asks_about_quitting() {
+        let asking = AppState {
+            quit_pending: true,
+            ..editing()
+        };
+        let chord = press(
+            KeyCode::Char('O'),
+            KeyModifiers::SUPER | KeyModifiers::SHIFT,
+        );
+
+        assert_ne!(action_for(&asking, chord), Some(Action::OpenFinder));
+    }
+
+    #[test]
+    fn plain_and_other_o_chords_are_not_the_finder() {
+        for modifiers in [
+            KeyModifiers::SHIFT,
+            KeyModifiers::SUPER,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ] {
+            let s = editing();
+            assert_ne!(
+                action_for(&s, press(KeyCode::Char('O'), modifiers)),
+                Some(Action::OpenFinder),
+                "{modifiers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_leader_works_from_a_panel_too() {
+        let tree = closed();
+
+        assert_eq!(
+            action_for(&tree, press(KeyCode::Char(' '), KeyModifiers::CONTROL)),
+            Some(Action::LeaderPressed)
+        );
+    }
+
+    #[test]
+    fn leader_then_h_j_k_l_moves_between_panels_and_never_reaches_neovim() {
+        let waiting = pending(&editing());
+
+        for (code, direction) in [
+            ('h', Direction::Left),
+            ('j', Direction::Down),
+            ('k', Direction::Up),
+            ('l', Direction::Right),
+        ] {
+            assert_eq!(
+                key_actions(&waiting, key(KeyCode::Char(code))),
+                vec![Action::LeaderDone, Action::FocusDirection(direction)],
+                "{code}"
+            );
+        }
+        assert_eq!(
+            key_actions(&waiting, key(KeyCode::Left)),
+            vec![Action::LeaderDone, Action::FocusDirection(Direction::Left)]
+        );
+        assert_eq!(
+            key_actions(&waiting, key(KeyCode::Tab)),
+            vec![Action::LeaderDone, Action::FocusNext]
+        );
+    }
+
+    #[test]
+    fn any_other_key_after_the_leader_just_lets_it_go() {
+        let waiting = pending(&editing());
+
+        for pressed in [
+            key(KeyCode::Esc),
+            key(KeyCode::Char('z')),
+            press(KeyCode::Char(' '), KeyModifiers::CONTROL),
+        ] {
+            assert_eq!(key_actions(&waiting, pressed), vec![Action::LeaderDone]);
+        }
+    }
+
+    #[test]
+    fn keys_without_a_pending_leader_are_a_single_action() {
+        assert_eq!(
+            key_actions(&editing(), key(KeyCode::Char('j'))),
+            vec![Action::EditorKeys("j".into())]
+        );
+        assert!(key_actions(&editing(), key(KeyCode::CapsLock)).is_empty());
+    }
+
+    #[test]
+    fn no_bare_letter_runs_an_ide_command_outside_the_editor() {
+        // Vim's own letters stay free: only the leader runs these.
+        let ide_letters = "BsLotdi?C=ApPDTefR/q";
+        for panel in [Panel::Files, Panel::Devices, Panel::Bottom, Panel::Editor] {
+            let state = reduce(closed(), Action::Focus(panel));
+            for ch in ide_letters.chars() {
+                let bare = action(&state, KeyCode::Char(ch));
+                let led = after_leader(&state, KeyCode::Char(ch));
+
+                assert_ne!(bare, led, "{ch:?} in {panel:?} must need the leader");
+            }
+        }
     }
 
     #[test]
@@ -497,13 +686,22 @@ mod tests {
             ..closed()
         };
 
-        assert_eq!(action(&elsewhere, KeyCode::Char('q')), Some(Action::Quit));
-        assert_eq!(action(&not_running, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            after_leader(&elsewhere, KeyCode::Char('q')),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            after_leader(&not_running, KeyCode::Char('q')),
+            Some(Action::Quit)
+        );
     }
 
     #[test]
     fn maps_quit_keys() {
-        assert_eq!(action(&closed(), KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            after_leader(&closed(), KeyCode::Char('q')),
+            Some(Action::Quit)
+        );
         assert_eq!(
             action_for(&closed(), press(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Some(Action::Quit)
@@ -522,7 +720,7 @@ mod tests {
             ('L', Action::ToggleLogs),
             ('o', Action::Focus(Panel::Bottom)),
         ] {
-            assert_eq!(action(&closed(), KeyCode::Char(code)), Some(expected));
+            assert_eq!(after_leader(&closed(), KeyCode::Char(code)), Some(expected));
         }
     }
 
@@ -650,13 +848,16 @@ mod tests {
 
     #[test]
     fn git_keys_work_from_any_panel() {
-        assert_eq!(action(&closed(), KeyCode::Char('C')), Some(Action::ShowGit));
         assert_eq!(
-            action(&closed(), KeyCode::Char('=')),
+            after_leader(&closed(), KeyCode::Char('C')),
+            Some(Action::ShowGit)
+        );
+        assert_eq!(
+            after_leader(&closed(), KeyCode::Char('=')),
             Some(Action::OpenDiffCurrent)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('A')),
+            after_leader(&closed(), KeyCode::Char('A')),
             Some(Action::ToggleBlame)
         );
     }
@@ -735,11 +936,11 @@ mod tests {
         let open = reduce(closed(), Action::TogglePerfPanel);
 
         assert_eq!(
-            action(&closed(), KeyCode::Char('p')),
+            after_leader(&closed(), KeyCode::Char('p')),
             Some(Action::TogglePerfPanel)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('P')),
+            after_leader(&closed(), KeyCode::Char('P')),
             Some(Action::TogglePerfIndicator)
         );
         assert_eq!(
@@ -774,7 +975,10 @@ mod tests {
     fn capital_d_opens_the_doctor() {
         let shift_d = press(KeyCode::Char('D'), KeyModifiers::SHIFT);
 
-        assert_eq!(action_for(&closed(), shift_d), Some(Action::ToggleDoctor));
+        assert_eq!(
+            action_for(&pending(&closed()), shift_d),
+            Some(Action::ToggleDoctor)
+        );
     }
 
     #[test]
@@ -793,7 +997,7 @@ mod tests {
         open.help_open = true;
 
         assert_eq!(
-            action(&closed(), KeyCode::Char('?')),
+            after_leader(&closed(), KeyCode::Char('?')),
             Some(Action::ToggleHelp)
         );
         assert_eq!(
@@ -890,11 +1094,11 @@ mod tests {
         let shift_t = press(KeyCode::Char('T'), KeyModifiers::SHIFT);
 
         assert_eq!(
-            action_for(&closed(), shift_t),
+            action_for(&pending(&closed()), shift_t),
             Some(Action::OpenTerminalPicker)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('e')),
+            after_leader(&closed(), KeyCode::Char('e')),
             Some(Action::OpenEditor)
         );
     }
@@ -974,15 +1178,15 @@ mod tests {
     #[test]
     fn f_slash_and_capital_r_open_the_finder_search_and_rescan() {
         assert_eq!(
-            action(&closed(), KeyCode::Char('f')),
+            after_leader(&closed(), KeyCode::Char('f')),
             Some(Action::OpenFinder)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('/')),
+            after_leader(&closed(), KeyCode::Char('/')),
             Some(Action::OpenGrep)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('R')),
+            after_leader(&closed(), KeyCode::Char('R')),
             Some(Action::RefreshFiles)
         );
     }
@@ -1049,11 +1253,15 @@ mod tests {
     }
 
     #[test]
-    fn q_still_quits_from_the_tree_and_other_keys_still_work_there() {
+    fn q_quits_after_the_leader_from_the_tree_and_tab_still_moves_focus() {
         let tree = with_files(&["a.txt"]);
 
-        assert_eq!(action(&tree, KeyCode::Char('q')), Some(Action::Quit));
-        assert_eq!(action(&tree, KeyCode::Char('f')), Some(Action::OpenFinder));
+        assert_eq!(action(&tree, KeyCode::Char('q')), None, "a bare q is Vim's");
+        assert_eq!(after_leader(&tree, KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(
+            after_leader(&tree, KeyCode::Char('f')),
+            Some(Action::OpenFinder)
+        );
         assert_eq!(action(&tree, KeyCode::Tab), Some(Action::FocusNext));
     }
 
@@ -1217,15 +1425,15 @@ mod tests {
     #[test]
     fn t_switches_the_target_d_focuses_the_devices_and_i_shows_the_environment() {
         assert_eq!(
-            action(&closed(), KeyCode::Char('t')),
+            after_leader(&closed(), KeyCode::Char('t')),
             Some(Action::ToggleTarget)
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('d')),
+            after_leader(&closed(), KeyCode::Char('d')),
             Some(Action::Focus(Panel::Devices))
         );
         assert_eq!(
-            action(&closed(), KeyCode::Char('i')),
+            after_leader(&closed(), KeyCode::Char('i')),
             Some(Action::ToggleInfo)
         );
     }
@@ -1276,13 +1484,16 @@ mod tests {
     fn global_keys_still_work_from_the_devices_panel() {
         let focused = devices_focused();
 
-        assert_eq!(action(&focused, KeyCode::Char('q')), Some(Action::Quit));
         assert_eq!(
-            action(&focused, KeyCode::Char('t')),
+            after_leader(&focused, KeyCode::Char('q')),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            after_leader(&focused, KeyCode::Char('t')),
             Some(Action::ToggleTarget)
         );
         assert_eq!(
-            action(&focused, KeyCode::Char('f')),
+            after_leader(&focused, KeyCode::Char('f')),
             Some(Action::OpenFinder)
         );
         assert_eq!(action(&focused, KeyCode::Tab), Some(Action::FocusNext));

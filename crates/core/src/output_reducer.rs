@@ -9,7 +9,7 @@ use crate::logparse::{BuildLine, parse_build_line};
 use crate::nav::clean_relative;
 use crate::output::{
     BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LogBuffer, LogRequest, MAX_PROBLEMS,
-    OutputTab, Severity,
+    OutputTab, Severity, StopAppRequest,
 };
 use crate::state::{AppState, LogStream, MAX_QUERY_CHARS};
 
@@ -83,14 +83,17 @@ fn append(mut state: AppState, tab: OutputTab, lines: Vec<String>) -> AppState {
 
 pub(crate) fn run_app(state: AppState) -> AppState {
     if state.build.phase == BuildPhase::Running {
-        return say(state, "A build is already running: press s to cancel it");
+        return say(
+            state,
+            "A build is already running: press leader+s to cancel it",
+        );
     }
     let Some(device) = state.selected_device().cloned() else {
-        return say(state, "No device selected: press d, then pick one");
+        return say(state, "No device selected: press leader+d, then pick one");
     };
     if device.state != DeviceState::Running {
         let message = format!(
-            "{} is not running: press d, then b to start it",
+            "{} is not running: press leader+d, then b to start it",
             device.name
         );
         return say(state, message);
@@ -111,6 +114,7 @@ pub(crate) fn run_app(state: AppState) -> AppState {
             id,
             step: "Building".to_string(),
             device: Some(device.name),
+            device_id: Some(device.id),
             ..BuildState::default()
         },
         build_log: Arc::new(LogBuffer::default()),
@@ -124,15 +128,85 @@ pub(crate) fn run_app(state: AppState) -> AppState {
     }
 }
 
+/// Stops what the last run started: cancels the build while it runs, then
+/// the app it launched once it is running.
 pub(crate) fn cancel_build(state: AppState) -> AppState {
     if state.build.phase != BuildPhase::Running {
-        return say(state, "No build is running");
+        return stop_app(state);
     }
     let mut pending_jobs = state.pending_jobs.clone();
     pending_jobs.push(Job::CancelBuild { id: state.build.id });
     AppState {
         status: Some("Cancelling the build…".to_string()),
         pending_jobs,
+        ..state
+    }
+}
+
+fn stop_app(state: AppState) -> AppState {
+    let Some(app_id) = state.build.app_id.clone() else {
+        return say(
+            state,
+            "Nothing to stop: no build is running and no app was run from here",
+        );
+    };
+    let platform = state.build.platform.unwrap_or(state.target);
+    let device = state
+        .devices
+        .iter()
+        .find(|d| d.platform == platform && Some(&d.id) == state.build.device_id.as_ref())
+        .cloned();
+    let forgotten = BuildState {
+        app_id: None,
+        ..state.build.clone()
+    };
+    let Some(device) = device.filter(|d| d.state == DeviceState::Running) else {
+        let name = state.build.device.clone().unwrap_or_default();
+        return say(
+            AppState {
+                build: forgotten,
+                ..state
+            },
+            format!("{name} is not running: the app is gone with it"),
+        );
+    };
+    let mut pending_jobs = state.pending_jobs.clone();
+    pending_jobs.push(Job::StopApp(StopAppRequest {
+        device: device.clone(),
+        app_id,
+    }));
+    // The run is over, so its log stops too.
+    let mut log_streams = state.log_streams.clone();
+    let following = log_streams
+        .get(&device.platform)
+        .is_some_and(|stream| stream.device == device.id);
+    if following {
+        log_streams.remove(&device.platform);
+        pending_jobs.push(Job::StopLogs(device.platform));
+    }
+    let stopped = AppState {
+        status: Some(format!("Stopping the app on {}…", device.name)),
+        build: forgotten,
+        pending_jobs,
+        log_streams,
+        ..state
+    };
+    if following {
+        let note = format!("— stopped following {} —", device.name);
+        return append(stopped, OutputTab::log_of(device.platform), vec![note]);
+    }
+    stopped
+}
+
+pub(crate) fn app_launched(state: AppState, id: u64, app_id: String) -> AppState {
+    if !is_current_build(&state, id) {
+        return state;
+    }
+    AppState {
+        build: BuildState {
+            app_id: Some(app_id),
+            ..state.build.clone()
+        },
         ..state
     }
 }
@@ -218,7 +292,8 @@ pub(crate) fn build_finished(
         .devices
         .iter()
         .find(|d| {
-            d.platform == state.build.platform.unwrap_or(state.target) && d.name == device_name
+            d.platform == state.build.platform.unwrap_or(state.target)
+                && Some(&d.id) == state.build.device_id.as_ref()
         })
         .cloned();
     let mut state = append(
@@ -254,7 +329,7 @@ fn follow_logs(state: AppState, device: &Device) -> AppState {
     if state
         .log_streams
         .get(&device.platform)
-        .is_some_and(|stream| stream.device == device.name)
+        .is_some_and(|stream| stream.device == device.id)
     {
         return AppState {
             output_tab: OutputTab::log_of(device.platform),
@@ -273,7 +348,7 @@ fn follow_logs(state: AppState, device: &Device) -> AppState {
         device.platform,
         LogStream {
             id,
-            device: device.name.clone(),
+            device: device.id.clone(),
         },
     );
     let marker = format!("— following {} —", device.name);
@@ -294,12 +369,12 @@ fn follow_logs(state: AppState, device: &Device) -> AppState {
 
 pub(crate) fn toggle_logs(state: AppState) -> AppState {
     let Some(device) = state.selected_device().cloned() else {
-        return say(state, "No device selected: press d, then pick one");
+        return say(state, "No device selected: press leader+d, then pick one");
     };
     let followed = state
         .log_streams
         .get(&device.platform)
-        .is_some_and(|stream| stream.device == device.name);
+        .is_some_and(|stream| stream.device == device.id);
     if followed {
         let mut log_streams = state.log_streams.clone();
         log_streams.remove(&device.platform);
@@ -608,6 +683,201 @@ mod tests {
             Some(&Job::CancelBuild { id: 1 })
         );
         assert_eq!(cancelling.build.phase, BuildPhase::Running);
+    }
+
+    fn launched_and_done() -> AppState {
+        let ran = [
+            Action::AppLaunched {
+                id: 1,
+                app_id: "com.example.app".to_string(),
+            },
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Succeeded,
+                millis: 5,
+            },
+        ]
+        .into_iter()
+        .fold(building(), reduce);
+        // The finished build already queued its log job; start clean.
+        AppState {
+            pending_jobs: Vec::new(),
+            ..ran
+        }
+    }
+
+    #[test]
+    fn stop_after_a_run_stops_the_app_it_launched_once() {
+        let stopped = reduce(launched_and_done(), Action::CancelBuild);
+        let again = reduce(stopped.clone(), Action::CancelBuild);
+
+        let Some(Job::StopApp(request)) = stopped
+            .pending_jobs
+            .iter()
+            .find(|job| matches!(job, Job::StopApp(_)))
+        else {
+            panic!("no stop queued: {:?}", stopped.pending_jobs);
+        };
+        assert_eq!(request.app_id, "com.example.app");
+        assert_eq!(request.device.name, "Pixel_8");
+        assert_eq!(stopped.build.app_id, None, "it is stopped only once");
+        assert_eq!(again.pending_jobs.len(), stopped.pending_jobs.len());
+        assert!(
+            again.status.as_deref().unwrap().contains("Nothing to stop"),
+            "{:?}",
+            again.status
+        );
+    }
+
+    #[test]
+    fn stopping_the_app_ends_its_log_too() {
+        let ran = launched_and_done();
+        assert!(
+            ran.log_streams.contains_key(&Platform::Android),
+            "followed after the run"
+        );
+
+        let stopped = reduce(ran, Action::CancelBuild);
+
+        assert!(stopped.log_streams.is_empty());
+        assert!(
+            stopped
+                .pending_jobs
+                .contains(&Job::StopLogs(Platform::Android))
+        );
+        assert!(
+            stopped
+                .logcat
+                .iter()
+                .any(|line| line.contains("stopped following Pixel_8")),
+        );
+    }
+
+    /// One simulator per iOS runtime share a name; only one of them is the
+    /// booted one the app runs on.
+    fn same_named_simulators() -> AppState {
+        let sim = |id: &str, state| device(Platform::Ios, id, "iPhone Air", state);
+        let mut s = with(vec![
+            sim("AAAAAAAA-0000-0000-0000-000000000000", DeviceState::Stopped),
+            sim("BBBBBBBB-0000-0000-0000-000000000000", DeviceState::Running),
+        ]);
+        s.target = Platform::Ios;
+        s.selected_devices
+            .insert(Platform::Ios, "BBBBBBBB-0000-0000-0000-000000000000".into());
+        s
+    }
+
+    #[test]
+    fn the_log_follows_the_simulator_the_app_ran_on_not_one_with_the_same_name() {
+        let ran = [
+            Action::RunApp,
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Succeeded,
+                millis: 5,
+            },
+        ]
+        .into_iter()
+        .fold(same_named_simulators(), reduce);
+
+        let Some(Job::StartLogs(request)) = ran
+            .pending_jobs
+            .iter()
+            .find(|job| matches!(job, Job::StartLogs(_)))
+        else {
+            panic!("no log job: {:?}", ran.pending_jobs);
+        };
+        assert_eq!(request.device.id, "BBBBBBBB-0000-0000-0000-000000000000");
+        assert_eq!(
+            ran.log_streams[&Platform::Ios].device,
+            "BBBBBBBB-0000-0000-0000-000000000000"
+        );
+    }
+
+    #[test]
+    fn stopping_targets_the_simulator_that_ran_it_not_a_namesake() {
+        let ran = [
+            Action::RunApp,
+            Action::AppLaunched {
+                id: 1,
+                app_id: "com.example.app".to_string(),
+            },
+            Action::BuildFinished {
+                id: 1,
+                outcome: BuildOutcome::Succeeded,
+                millis: 5,
+            },
+            Action::CancelBuild,
+        ]
+        .into_iter()
+        .fold(same_named_simulators(), reduce);
+
+        let Some(Job::StopApp(request)) = ran
+            .pending_jobs
+            .iter()
+            .find(|job| matches!(job, Job::StopApp(_)))
+        else {
+            panic!("no stop queued: {:?}", ran.pending_jobs);
+        };
+        assert_eq!(request.device.id, "BBBBBBBB-0000-0000-0000-000000000000");
+    }
+
+    #[test]
+    fn stop_with_nothing_run_says_so_and_queues_nothing() {
+        let s = reduce(running_android(), Action::CancelBuild);
+
+        assert!(s.pending_jobs.is_empty());
+        assert!(s.status.as_deref().unwrap().contains("Nothing to stop"));
+    }
+
+    #[test]
+    fn while_building_stop_cancels_the_build_not_the_app() {
+        let launching = reduce(
+            building(),
+            Action::AppLaunched {
+                id: 1,
+                app_id: "com.example.app".to_string(),
+            },
+        );
+
+        let s = reduce(launching, Action::CancelBuild);
+
+        assert_eq!(s.pending_jobs.last(), Some(&Job::CancelBuild { id: 1 }));
+    }
+
+    #[test]
+    fn a_device_that_is_gone_takes_the_app_with_it() {
+        let mut s = launched_and_done();
+        s.devices = Arc::new(vec![device(
+            Platform::Android,
+            "Pixel_8",
+            "Pixel_8",
+            DeviceState::Stopped,
+        )]);
+
+        let after = reduce(s, Action::CancelBuild);
+
+        assert!(
+            !after
+                .pending_jobs
+                .iter()
+                .any(|j| matches!(j, Job::StopApp(_)))
+        );
+        assert!(after.status.as_deref().unwrap().contains("not running"));
+        assert_eq!(after.build.app_id, None);
+    }
+
+    #[test]
+    fn a_launch_report_from_an_old_build_is_ignored() {
+        let s = reduce(
+            building(),
+            Action::AppLaunched {
+                id: 99,
+                app_id: "com.other".to_string(),
+            },
+        );
+
+        assert_eq!(s.build.app_id, None);
     }
 
     // --- output while building ---

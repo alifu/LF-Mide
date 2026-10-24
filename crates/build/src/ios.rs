@@ -90,6 +90,7 @@ pub(crate) fn run(
         &["simctl", "launch", udid, &info.identifier],
         "Starting the app",
     )?;
+    report.launched(&info.identifier);
     Ok(())
 }
 

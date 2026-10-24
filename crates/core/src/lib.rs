@@ -46,7 +46,7 @@ pub use mouse::{EditorMouse, MouseAction, MouseButton};
 pub use nav::{FileList, FileMatch, GrepHit, TreeRow};
 pub use output::{
     BuildOutcome, BuildPhase, BuildRequest, BuildState, Job, LOG_CAPACITY, LogBuffer, LogLevel,
-    LogRequest, MAX_PROBLEMS, OutputFilter, OutputTab, Problem, Severity,
+    LogRequest, MAX_PROBLEMS, OutputFilter, OutputTab, Problem, Severity, StopAppRequest,
 };
 pub use perf::{
     Health, PerfSample, Pressure, ProcessKind, ProcessStat, StopRequest, SwapLimits, SystemStats,
@@ -56,6 +56,6 @@ pub use prefs::{ProjectPrefs, prefs_file_name};
 pub use project::{Project, ProjectError, ProjectLayout};
 pub use reducer::reduce;
 pub use state::{
-    AppState, BranchInfo, DeviceAction, DeviceCommand, DoctorPanel, FinderState, GrepState,
-    MAX_QUERY_CHARS, MAX_TRANSITION_POLLS, Panel, Transition,
+    AppState, BranchInfo, DeviceAction, DeviceCommand, Direction, DoctorPanel, FinderState,
+    GrepState, MAX_QUERY_CHARS, MAX_TRANSITION_POLLS, Panel, Transition,
 };

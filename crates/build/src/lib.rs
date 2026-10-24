@@ -13,6 +13,7 @@
 mod android;
 mod ios;
 mod logs;
+mod stop;
 mod streamer;
 
 use std::path::Path;
@@ -24,6 +25,7 @@ use lf_mide_system::System;
 use lf_mide_system::stream::{Exit, StreamSpec};
 
 pub use logs::log_spec;
+pub use stop::stop_app;
 pub use streamer::ProcessStreamer;
 
 /// Set by one thread to ask a running pipeline to stop.
@@ -46,6 +48,9 @@ pub trait Report {
     fn step(&mut self, step: &str);
     /// Lines for the build log.
     fn lines(&mut self, lines: Vec<String>);
+    /// The app was started under this id (package name or bundle id), so
+    /// it can be stopped later.
+    fn launched(&mut self, _app_id: &str) {}
 }
 
 /// Runs a long command, passing on its output as it arrives.
@@ -180,6 +185,7 @@ pub(crate) mod testing {
     pub struct Recorder {
         pub steps: Vec<String>,
         pub log: Vec<String>,
+        pub launched: Vec<String>,
     }
 
     impl Report for Recorder {
@@ -189,6 +195,10 @@ pub(crate) mod testing {
 
         fn lines(&mut self, lines: Vec<String>) {
             self.log.extend(lines);
+        }
+
+        fn launched(&mut self, app_id: &str) {
+            self.launched.push(app_id.to_string());
         }
     }
 

@@ -78,16 +78,28 @@ impl Running {
 }
 
 async fn start_with(width: u16, height: u16, lsp: Option<LspServers>) -> Running {
+    start_full(width, height, lsp, false, &[]).await
+}
+
+/// `args` follow `--clean`, e.g. `-c "set nonumber"` for a user's choice.
+async fn start_full(
+    width: u16,
+    height: u16,
+    lsp: Option<LspServers>,
+    line_numbers: bool,
+    args: &[&str],
+) -> Running {
     let dir = tempfile::TempDir::new().unwrap();
     let (tx, events) = unbounded_channel();
     let launch = Launch {
         program: "nvim".into(),
-        args: vec!["--clean".into()],
+        args: ["--clean"].iter().chain(args).map(Into::into).collect(),
         cwd: dir.path().to_path_buf(),
         socket: dir.path().join("nvim.sock"),
         width,
         height,
         lsp,
+        line_numbers,
     };
     let session = Session::start(launch, move |event| {
         let _ = tx.send(event);
@@ -301,6 +313,7 @@ async fn a_missing_program_is_an_error() {
         width: 10,
         height: 5,
         lsp: None,
+        line_numbers: false,
     };
 
     let result = Session::start(launch, |_| {}).await;
@@ -392,4 +405,35 @@ async fn a_click_moves_the_cursor_in_neovim() {
         .await;
 
     assert_eq!(screen.cursor, (0, 1));
+}
+
+#[tokio::test]
+async fn line_numbers_are_on_unless_the_users_config_chose() {
+    if !nvim_available() {
+        return;
+    }
+    let mut numbered = start_full(40, 10, None, true, &[]).await;
+    let mut chosen = start_full(40, 10, None, true, &["-c", "set nonumber"]).await;
+    let mut off = start_full(40, 10, None, false, &[]).await;
+    for nvim in [&mut numbered, &mut chosen, &mut off] {
+        nvim.session.paste("alpha\r".into()).unwrap();
+    }
+
+    let with_numbers = numbered
+        .until_screen("numbered line", |s| s.row_text(0).contains("alpha"))
+        .await;
+    let user_choice = chosen
+        .until_screen("unnumbered line", |s| s.row_text(0).contains("alpha"))
+        .await;
+    let disabled = off
+        .until_screen("plain line", |s| s.row_text(0).contains("alpha"))
+        .await;
+
+    assert!(
+        with_numbers.row_text(0).trim_start().starts_with("1 alpha"),
+        "{:?}",
+        with_numbers.row_text(0)
+    );
+    assert!(starts_with(&user_choice, 0, "alpha"), "nonumber is kept");
+    assert!(starts_with(&disabled, 0, "alpha"), "line_numbers = false");
 }

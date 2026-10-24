@@ -159,9 +159,9 @@ fn muted(text: &str) -> Line<'static> {
 
 fn empty_hint(tab: OutputTab) -> &'static str {
     match tab {
-        OutputTab::Build => "Press B to build the app and run it on the chosen device",
-        OutputTab::Logcat => "Press L to follow the log of the chosen emulator",
-        OutputTab::IosLog => "Press L to follow the log of the chosen simulator",
+        OutputTab::Build => "Press leader+B to build the app and run it on the chosen device",
+        OutputTab::Logcat => "Press leader+L to follow the log of the chosen emulator",
+        OutputTab::IosLog => "Press leader+L to follow the log of the chosen simulator",
         OutputTab::Problems | OutputTab::Git => "",
     }
 }
@@ -264,7 +264,7 @@ fn logcat_color(line: &str) -> Option<Color> {
 fn problem_lines(state: &AppState, rows: usize, width: usize) -> Vec<Line<'static>> {
     if state.problems.is_empty() {
         let text = match state.build.phase {
-            BuildPhase::Idle => "Nothing built yet: press B",
+            BuildPhase::Idle => "Nothing built yet: press leader+B",
             _ => "No errors or warnings",
         };
         return vec![muted(text)];
@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn an_empty_build_tab_says_how_to_start() {
-        assert!(screen(&state()).contains("Press B to build"));
+        assert!(screen(&state()).contains("Press leader+B to build"));
     }
 
     #[test]

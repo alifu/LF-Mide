@@ -186,7 +186,10 @@ pub(crate) fn open_diff_selected(state: AppState) -> AppState {
 pub(crate) fn open_diff_current(state: AppState) -> AppState {
     match state.current_file.clone() {
         Some(path) => start_diff(state, path),
-        None => say(state, "Open a file in the editor first (e), then press ="),
+        None => say(
+            state,
+            "Open a file in the editor first (leader+e), then press leader+=",
+        ),
     }
 }
 

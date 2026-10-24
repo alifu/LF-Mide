@@ -65,6 +65,7 @@ impl EmbeddedEditor {
             width,
             height,
             lsp: state.config.lsp.then(|| language_servers(sys)),
+            line_numbers: state.config.line_numbers,
         };
         match Session::start(launch, move |event| {
             for action in actions_for(event, &socket) {

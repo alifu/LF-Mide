@@ -27,8 +27,12 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 
 const FILES_WIDTH_PCT: u16 = 20;
 const DEVICES_WIDTH_PCT: u16 = 22;
-const HELP_HINT: &str =
-    "Tab: focus · e: editor · f: find · /: search · T: terminal · D: doctor · q: quit";
+
+/// The keys worth knowing, in the status bar. Every IDE command follows the
+/// leader, so the hint names it.
+fn help_hint(leader: &str) -> String {
+    format!("⌘⇧O find · {leader} then: ? help · h/j/k/l focus · q quit")
+}
 const PICKER_TITLE: &str = " Terminal · Enter select · Esc cancel ";
 const PICKER_WIDTH: u16 = 56;
 const DOCTOR_TITLE: &str = " Doctor · Esc close · r re-run · j/k scroll ";
@@ -382,7 +386,7 @@ fn render_status(frame: &mut Frame, area: Rect, state: &AppState) {
         ));
     }
     spans.push(Span::styled(
-        format!("│ {HELP_HINT}"),
+        format!("│ {}", help_hint(&state.config.leader)),
         Style::new().fg(theme::current().muted),
     ));
     frame.render_widget(
@@ -457,7 +461,7 @@ mod tests {
             "Devices",
             "Logcat",
             "Problems",
-            HELP_HINT,
+            &help_hint(&state().config.leader),
         ] {
             assert!(
                 screen.contains(expected),
