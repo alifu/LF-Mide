@@ -142,6 +142,10 @@ pub enum Action {
     PrefsLoaded(ProjectPrefs),
     /// Show or hide the environment (SDK) overlay.
     ToggleInfo,
+    /// Show or hide the help overlay (keys and a Vim cheat sheet).
+    ToggleHelp,
+    /// Scroll the help overlay by this many lines (negative goes up).
+    HelpScroll(i16),
     /// Build the app and run it on the chosen device.
     RunApp,
     /// Stop the build in progress.

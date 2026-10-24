@@ -187,6 +187,10 @@ pub struct AppState {
     pub pending_commands: Vec<DeviceCommand>,
     /// The environment overlay (SDK paths and versions) is open.
     pub info_open: bool,
+    /// The help overlay (keys and a Vim cheat sheet) is open.
+    pub help_open: bool,
+    /// First visible line of the help overlay.
+    pub help_scroll: u16,
     pub output_tab: OutputTab,
     pub build: BuildState,
     pub build_log: Arc<LogBuffer>,
@@ -270,6 +274,7 @@ impl AppState {
             || self.diff.is_some()
             || self.terminal_picker.is_some()
             || self.info_open
+            || self.help_open
             || self.perf_open
             || self.doctor != DoctorPanel::Closed
     }
@@ -333,6 +338,8 @@ impl AppState {
             transitions: BTreeMap::new(),
             pending_commands: Vec::new(),
             info_open: false,
+            help_open: false,
+            help_scroll: 0,
             output_tab: OutputTab::Build,
             build: BuildState::default(),
             build_log: Arc::new(LogBuffer::default()),

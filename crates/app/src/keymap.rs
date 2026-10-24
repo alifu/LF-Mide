@@ -37,6 +37,9 @@ pub fn action_for(state: &AppState, key: KeyEvent) -> Option<Action> {
     if state.terminal_picker.is_some() {
         return picker_key(key.code);
     }
+    if state.help_open {
+        return help_key(key.code);
+    }
     if state.info_open {
         return info_key(key.code);
     }
@@ -109,6 +112,7 @@ fn main_key(state: &AppState, code: KeyCode, ctrl: bool) -> Option<Action> {
         KeyCode::Char('t') => Some(Action::ToggleTarget),
         KeyCode::Char('d') => Some(Action::Focus(Panel::Devices)),
         KeyCode::Char('i') => Some(Action::ToggleInfo),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('C') => Some(Action::ShowGit),
         KeyCode::Char('=') => Some(Action::OpenDiffCurrent),
         KeyCode::Char('A') => Some(Action::ToggleBlame),
@@ -245,6 +249,18 @@ fn info_key(code: KeyCode) -> Option<Action> {
     match code {
         KeyCode::Esc | KeyCode::Char('i') => Some(Action::ToggleInfo),
         KeyCode::Char('q') => Some(Action::Quit),
+        _ => None,
+    }
+}
+
+fn help_key(code: KeyCode) -> Option<Action> {
+    match code {
+        KeyCode::Esc | KeyCode::Char('?') => Some(Action::ToggleHelp),
+        KeyCode::Char('q') => Some(Action::Quit),
+        KeyCode::Char('j') | KeyCode::Down => Some(Action::HelpScroll(1)),
+        KeyCode::Char('k') | KeyCode::Up => Some(Action::HelpScroll(-1)),
+        KeyCode::PageDown => Some(Action::HelpScroll(PAGE_LINES)),
+        KeyCode::PageUp => Some(Action::HelpScroll(-PAGE_LINES)),
         _ => None,
     }
 }
@@ -769,6 +785,23 @@ mod tests {
         assert_eq!(action(&closed(), KeyCode::Char('x')), None);
         assert_eq!(action(&closed(), KeyCode::Char('c')), None);
         assert_eq!(action_for(&closed(), release), None);
+    }
+
+    #[test]
+    fn question_mark_opens_help_and_the_help_keys_scroll_it() {
+        let mut open = closed();
+        open.help_open = true;
+
+        assert_eq!(
+            action(&closed(), KeyCode::Char('?')),
+            Some(Action::ToggleHelp)
+        );
+        assert_eq!(
+            action(&open, KeyCode::Char('j')),
+            Some(Action::HelpScroll(1))
+        );
+        assert_eq!(action(&open, KeyCode::Esc), Some(Action::ToggleHelp));
+        assert_eq!(action(&open, KeyCode::Char('f')), None, "panel keys wait");
     }
 
     #[test]

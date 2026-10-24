@@ -4,6 +4,7 @@
 mod devices;
 mod editor;
 mod git;
+mod help;
 mod output;
 mod perf;
 mod search;
@@ -99,6 +100,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     devices::render_info(frame, state);
     perf::render_perf(frame, state);
     git::render_diff(frame, state);
+    help::render_help(frame, state);
 }
 
 /// Who will host Neovim: the configured terminal, or what `Auto` found.

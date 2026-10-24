@@ -320,6 +320,15 @@ pub fn reduce(state: AppState, action: Action) -> AppState {
             info_open: !state.info_open,
             ..state
         },
+        Action::ToggleHelp => AppState {
+            help_open: !state.help_open,
+            help_scroll: 0,
+            ..state
+        },
+        Action::HelpScroll(delta) => AppState {
+            help_scroll: state.help_scroll.saturating_add_signed(delta),
+            ..state
+        },
         Action::RunApp => output_reducer::run_app(state),
         Action::CancelBuild => output_reducer::cancel_build(state),
         Action::BuildStep { id, step } => output_reducer::build_step(state, id, step),
@@ -1926,6 +1935,19 @@ mod tests {
 
         assert!(open.info_open);
         assert!(!reduce(open, Action::ToggleInfo).info_open);
+    }
+
+    #[test]
+    fn the_help_overlay_toggles_and_scrolls_from_the_top() {
+        let open = reduce(state(), Action::ToggleHelp);
+        let down = reduce(open.clone(), Action::HelpScroll(4));
+        let up_past_top = reduce(down.clone(), Action::HelpScroll(-10));
+        let reopened = reduce(reduce(down, Action::ToggleHelp), Action::ToggleHelp);
+
+        assert!(open.help_open);
+        assert_eq!(up_past_top.help_scroll, 0);
+        assert_eq!(reopened.help_scroll, 0, "reopening starts at the top");
+        assert!(!reduce(open, Action::ToggleHelp).help_open);
     }
 
     #[test]
